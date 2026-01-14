@@ -1,43 +1,22 @@
-# User-specific files
-*.rsuser
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-*.userprefs
-
-# Build results
-[Dd]ebug/
-[Rr]elease/
-x64/
-x86/
-bld/
-[Bb]in/
-[Oo]bj/
-
-# Visual Studio cache
-.vs/
-
-# NuGet Packages
-*.nupkg
-**/[Pp]ackages/*
-!**/[Pp]ackages/build/
-
-# Node.js
-node_modules/
-
 # Python
 __pycache__/
 *.pyc
-venv/
+*.pyo
+*.pyd
 .venv/
-env/
+venv/
 
-# Environment Variables
+# Environment variables
 .env
 
-# VS Code
-.vscode/
+# Streamlit
+.streamlit/secrets.toml
 
-# Logs
-*.log
+# Vector stores / embeddings
+vector_stores/
+*.faiss
+*.pkl
+
+# OS
+.DS_Store
+Thumbs.db
