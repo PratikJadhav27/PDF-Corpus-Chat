@@ -2,20 +2,20 @@
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
 .venv/
 venv/
 
-# Environment variables
+# Env / secrets
 .env
-
-# Streamlit
 .streamlit/secrets.toml
 
-# Vector stores / embeddings
+# Vector DB / artifacts
 vector_stores/
 *.faiss
 *.pkl
+
+# Streamlit cache
+.streamlit/
 
 # OS
 .DS_Store
