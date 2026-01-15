@@ -13,6 +13,10 @@ Upload multiple PDFs, organize them into collections, and chat with grounded ans
 - 🔍 Retrieval-based context injection for more accurate answers
 - 🧾 Metadata tracking (pages, chunks, processed time)
 
+### Default Chunking
+- Chunk size: **1500**
+- Chunk overlap: **200**
+
 ---
 
 ## 🧱 Tech Stack
