@@ -20,3 +20,6 @@ vector_stores/
 # OS
 .DS_Store
 Thumbs.db
+
+
+metadata/
