@@ -29,6 +29,9 @@ from src.rag.vector_store import (
     get_embeddings,
 )
 
+from src.rag.retriever import retrieve_docs
+from src.rag.prompting import build_context_with_citations, build_grounded_prompt
+
 load_dotenv()
 
 # Configure Gemini API (used for token counting)
@@ -216,13 +219,26 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
         )
         return None, None
 
-    docs = db.similarity_search(user_question, k=RETRIEVAL.top_k)
+    # Retrieve docs
+    docs = retrieve_docs(db, user_question)
 
-    chain = get_conversational_chain(prompt_type=prompt_type, temperature=temperature)
+    if not docs:
+        response = "I don't know based on the provided documents."
+        return response, []
 
-    # context includes chunk text only (Day 3 we will add strict citations)
-    context = "\n\n---\n\n".join(doc.page_content for doc in docs)
-    response = chain.invoke({"context": context, "question": user_question})
+    # Build context with citation tags
+    context = build_context_with_citations(docs)
+
+    # Strict grounded prompt (ignores prompt_type for now)
+    prompt = build_grounded_prompt(context=context, question=user_question)
+
+    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=temperature)
+
+    try:
+        response = model.invoke(prompt).content
+    except Exception as e:
+        st.error(f"Model error: {e}")
+        return None, None
 
     # Token count (best effort)
     token_count = 0
@@ -232,7 +248,7 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
     except Exception:
         pass
 
-    # Add to chat history with better source info
+    # Save history
     st.session_state.chat_history.append(
         {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
