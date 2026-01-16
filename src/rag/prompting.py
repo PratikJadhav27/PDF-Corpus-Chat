@@ -1,5 +1,5 @@
 from typing import List
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 
 def build_context_with_citations(docs: List[Document]) -> str:
