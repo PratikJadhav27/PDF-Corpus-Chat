@@ -13,26 +13,22 @@ def build_context_with_citations(docs: List[Document]) -> str:
     for d in docs:
         source = d.metadata.get("source", "Unknown")
         page = d.metadata.get("page_number", "?")
-        parts.append(f"[source={source} | page={page}]\n{d.page_content}")
+        parts.append(f"[{source} | page {page}]\n{d.page_content}")
     return "\n\n---\n\n".join(parts)
 
 
 def build_grounded_prompt(context: str, question: str) -> str:
-    """
-    Strict prompt to reduce hallucinations.
-    Forces citations and grounded answers only.
-    """
     return f"""
 You are a strict document-grounded assistant.
 
-RULES:
-1) Answer ONLY using the context below.
-2) If the answer is not in the context, say exactly:
-"I don't know based on the provided documents."
-3) When you use a fact, add a citation at the end of the sentence like:
-[source.pdf | page 3]
-4) Do NOT use outside knowledge.
-5) Keep the answer clear and structured.
+You MUST follow these rules:
+- Use ONLY the context provided.
+- If the answer is not explicitly present in the context, reply exactly:
+I don't know based on the provided documents.
+- Every sentence in your answer MUST end with a citation in this exact format:
+[<source> | page <page_number>]
+- Do NOT add citations that are not in the context.
+- Do NOT use outside knowledge.
 
 CONTEXT:
 {context}
@@ -40,5 +36,6 @@ CONTEXT:
 QUESTION:
 {question}
 
-ANSWER:
+ANSWER (with citations at end of every sentence):
 """.strip()
+
