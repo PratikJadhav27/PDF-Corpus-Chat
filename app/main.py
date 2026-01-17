@@ -316,7 +316,8 @@ def process_and_index_pdfs(pdf_docs, collection_name: str):
         "collection_name": collection_name,
     }
 
-    metadata_dir = f"metadata/{collection_name}"
+    safe_collection = collection_name.strip().replace(" ", "_")
+    metadata_dir = f"metadata/{safe_collection}"
     os.makedirs(metadata_dir, exist_ok=True)
 
     with open(f"{metadata_dir}/metadata.json", "w") as f:
@@ -726,8 +727,11 @@ def main():
 
         if new_collection and new_collection.strip():
             if st.button("✅ Create Collection", key="create_collection_btn"):
-                os.makedirs(f"vector_stores/{new_collection}", exist_ok=True)
-                os.makedirs(f"metadata/{new_collection}", exist_ok=True)
+                safe_collection = new_collection.strip().replace(" ", "_")
+                os.makedirs(f"vector_stores/{safe_collection}", exist_ok=True)
+                os.makedirs(f"metadata/{safe_collection}", exist_ok=True)
+                st.session_state.current_collection = safe_collection
+
                 st.session_state.current_collection = new_collection
                 st.success(f"✅ Collection '{new_collection}' created!")
                 st.rerun()
