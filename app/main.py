@@ -20,7 +20,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from src.config import CHUNKING, RETRIEVAL
-from src.ingestion.pdf_loader import load_pdf_pages
+from src.ingestion.pdf_loader import load_pdf_pages_with_stats
 from src.ingestion.chunking import chunk_pdf_pages
 from src.rag.vector_store import (
     build_vector_store_from_chunks,
@@ -276,47 +276,81 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
 # -----------------------------
 def process_and_index_pdfs(pdf_docs, collection_name: str):
     """
-    Day 2 pipeline:
-    - load page-wise text
-    - chunk per page with metadata
-    - build FAISS with metadatas
-    - persist per collection
-    - write collection metadata.json
+    Day 3 upgrade:
+    - Safe page extraction
+    - Extraction stats per PDF
+    - Chunking per page with metadata
+    - Persist FAISS per collection
+    - Persist metadata.json with extraction stats
     """
+    safe_collection = collection_name.strip().replace(" ", "_") or "default"
+
     all_pages = []
     files_info = []
-    total_pages = 0
+    extraction_stats = []
+
+    total_pages_all = 0
+    extracted_pages_all = 0
+    empty_pages_all = 0
+    failed_pages_all = 0
 
     for pdf in pdf_docs:
-        pages = load_pdf_pages(pdf)
-        all_pages.extend(pages)
+        pages, stats = load_pdf_pages_with_stats(pdf)
 
-        files_info.append({"name": pdf.name, "pages": len(pages)})
-        total_pages += len(pages)
+        all_pages.extend(pages)
+        extraction_stats.append(stats)
+
+        files_info.append({"name": pdf.name, "pages": stats["total_pages"]})
+
+        total_pages_all += stats["total_pages"]
+        extracted_pages_all += stats["extracted_pages"]
+        empty_pages_all += stats["empty_pages"]
+        failed_pages_all += stats["failed_pages"]
 
     chunks = chunk_pdf_pages(all_pages)
 
     if not chunks:
         return {
             "ok": False,
-            "message": "No text extracted from PDFs. They might be scanned/image-based PDFs.",
+            "message": "No usable text extracted from PDFs. These may be scanned/image-based or corrupted PDFs.",
+            "stats": {
+                "total_pages": total_pages_all,
+                "extracted_pages": extracted_pages_all,
+                "empty_pages": empty_pages_all,
+                "failed_pages": failed_pages_all,
+                "files": extraction_stats,
+            },
         }
 
     vector_store = build_vector_store_from_chunks(chunks)
-    save_vector_store(vector_store, collection_name)
+    save_vector_store(vector_store, safe_collection)
 
-    # Store metadata for stats tab
+    overall_success_rate = (
+        round((extracted_pages_all / total_pages_all) * 100, 2)
+        if total_pages_all > 0
+        else 0.0
+    )
+
     metadata = {
         "files": [f["name"] for f in files_info],
-        "total_pages": total_pages,
+        "total_pages": total_pages_all,
         "total_chunks": len(chunks),
         "chunk_size": CHUNKING.chunk_size,
         "chunk_overlap": CHUNKING.chunk_overlap,
         "processed_at": datetime.now().isoformat(),
-        "collection_name": collection_name,
+        "collection_name": safe_collection,
+        "extraction_stats": {
+            "overall": {
+                "total_pages": total_pages_all,
+                "extracted_pages": extracted_pages_all,
+                "empty_pages": empty_pages_all,
+                "failed_pages": failed_pages_all,
+                "success_rate_percent": overall_success_rate,
+            },
+            "per_file": extraction_stats,
+        },
     }
 
-    safe_collection = collection_name.strip().replace(" ", "_")
     metadata_dir = f"metadata/{safe_collection}"
     os.makedirs(metadata_dir, exist_ok=True)
 
@@ -325,7 +359,12 @@ def process_and_index_pdfs(pdf_docs, collection_name: str):
 
     st.session_state.document_metadata = metadata
 
-    return {"ok": True, "message": f"Indexed {len(pdf_docs)} PDF(s) successfully."}
+    return {
+        "ok": True,
+        "message": f"Indexed {len(pdf_docs)} PDF(s) successfully.",
+        "stats": metadata["extraction_stats"],
+    }
+
 
 
 # -----------------------------
@@ -514,6 +553,35 @@ def main():
 
             st.write("---")
             st.write(f"*Last processed: {metadata.get('processed_at', 'N/A')}*")
+
+            stats = metadata.get("extraction_stats", {})
+            overall = stats.get("overall", {})
+
+            if overall:
+                st.write("---")
+                st.subheader("📊 Extraction Quality")
+
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("✅ Extracted Pages", overall.get("extracted_pages", 0))
+                with col2:
+                    st.metric("📄 Total Pages", overall.get("total_pages", 0))
+                with col3:
+                    st.metric("⚠️ Empty Pages", overall.get("empty_pages", 0))
+                with col4:
+                    st.metric("💥 Failed Pages", overall.get("failed_pages", 0))
+
+                st.write(f"**Success Rate:** {overall.get('success_rate_percent', 0)}%")
+
+                with st.expander("Per-file extraction breakdown"):
+                    for f in stats.get("per_file", []):
+                        st.write(
+                            f"• **{f.get('file_name')}** → "
+                            f"{f.get('extracted_pages')}/{f.get('total_pages')} extracted "
+                            f"({f.get('extraction_success_rate')}%) | "
+                            f"Empty: {f.get('empty_pages')} | Failed: {f.get('failed_pages')}"
+                        )
+
         else:
             st.info(f"📌 No documents in '{selected_collection_stats}' collection yet.")
 
@@ -768,14 +836,44 @@ def main():
                     result = process_and_index_pdfs(
                         pdf_docs, st.session_state.current_collection
                     )
+
                     if result["ok"]:
                         st.success(
                             f"✅ Done! Processed {len(pdf_docs)} PDF(s) in collection '{st.session_state.current_collection}'"
                         )
                     else:
                         st.error(result["message"])
+
+                    # --- Extraction Stats UI ---
+                    stats = result.get("stats")
+                    if stats:
+                        st.markdown("### 📊 Extraction Stats")
+
+                        overall = stats.get("overall", {})
+                        st.write(
+                            f"**Success Rate:** {overall.get('success_rate_percent', 0)}% "
+                            f"({overall.get('extracted_pages', 0)}/{overall.get('total_pages', 0)} pages extracted)"
+                        )
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("📄 Total Pages", overall.get("total_pages", 0))
+                        with col2:
+                            st.metric("✅ Extracted Pages", overall.get("extracted_pages", 0))
+                        with col3:
+                            st.metric("⚠️ Failed Pages", overall.get("failed_pages", 0))
+
+                        with st.expander("📁 Per-file breakdown"):
+                            for f in stats.get("per_file", []):
+                                st.write(
+                                    f"**{f.get('file_name')}** → "
+                                    f"{f.get('extracted_pages')}/{f.get('total_pages')} extracted "
+                                    f"({f.get('extraction_success_rate')}%) | "
+                                    f"Empty: {f.get('empty_pages')} | Failed: {f.get('failed_pages')}"
+                                )
             else:
                 st.error("Please upload at least one PDF file")
+
 
         st.write("---")
 
