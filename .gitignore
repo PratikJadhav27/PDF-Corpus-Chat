@@ -23,3 +23,5 @@ Thumbs.db
 
 
 metadata/
+data/
+vector_stores/
