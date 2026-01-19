@@ -11,8 +11,6 @@ from datetime import datetime
 import shutil
 
 from dotenv import load_dotenv
-import google.generativeai as genai
-
 from PyPDF2 import PdfReader  # kept for a couple old utility funcs (we'll remove later)
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -35,8 +33,6 @@ from src.rag.prompting import build_context_with_citations, build_grounded_promp
 load_dotenv()
 
 # Configure Gemini API (used for token counting)
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
 
 # -----------------------------
 # Session State
@@ -103,6 +99,16 @@ def load_collection_metadata(collection_name):
 # -----------------------------
 # Old feature helpers (kept)
 # -----------------------------
+
+def render_citations(docs):
+    citations = []
+    for d in docs:
+        src = d.metadata.get("source", "Unknown")
+        page = d.metadata.get("page_number", "?")
+        citations.append(f"- **{src}** | page **{page}**")
+    return "\n".join(sorted(set(citations)))
+
+
 def keyword_search_in_pdf(pdf_docs, keyword):
     """Search for keywords in uploaded PDFs"""
     results = []
@@ -251,11 +257,6 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
 
     # Token count (best effort)
     token_count = 0
-    try:
-        token_count = genai.count_text_tokens(response).total_tokens
-        st.session_state.token_count += token_count
-    except Exception:
-        pass
 
     # Save history
     st.session_state.chat_history.append(
@@ -504,6 +505,9 @@ def main():
 
                 st.subheader("📝 Response")
                 st.write(response)
+
+                st.subheader("📌 Citations")
+                st.markdown(render_citations(docs))
 
                 with st.expander("📍 View Sources"):
                     for i, doc in enumerate(docs, 1):
