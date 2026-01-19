@@ -10,6 +10,7 @@ class ChunkingConfig:
 @dataclass(frozen=True)
 class RetrievalConfig:
     top_k: int = 4
+    mode: str = "similarity"  # "similarity" or "mmr"
 
 
 CHUNKING = ChunkingConfig()
