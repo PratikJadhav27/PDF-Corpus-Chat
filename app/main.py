@@ -51,7 +51,10 @@ if "token_count" not in st.session_state:
     st.session_state.token_count = 0
 if "feedback_data" not in st.session_state:
     st.session_state.feedback_data = []
-
+if "retrieval_mode" not in st.session_state:
+    st.session_state.retrieval_mode = "similarity"
+if "top_k" not in st.session_state:
+    st.session_state.top_k = 4
 
 # -----------------------------
 # Utility / Collection helpers
@@ -220,7 +223,13 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
         return None, None
 
     # Retrieve docs
-    docs = retrieve_docs(db, user_question)
+    docs = retrieve_docs(
+        db,
+        user_question,
+        mode=st.session_state.retrieval_mode,
+        k=st.session_state.top_k,
+    )
+
 
     if not docs:
         response = "I don't know based on the provided documents."
@@ -441,6 +450,29 @@ def main():
 
         st.markdown("---")
         st.subheader("⚙️ Settings")
+
+        st.markdown("### 🔎 Retrieval Settings")
+
+        colA, colB = st.columns(2)
+
+        with colA:
+            st.session_state.retrieval_mode = st.selectbox(
+                "Retrieval Mode",
+                ["similarity", "mmr"],
+                index=0 if st.session_state.retrieval_mode == "similarity" else 1,
+                help="MMR reduces repetitive chunks by retrieving diverse context.",
+            )
+
+        with colB:
+            st.session_state.top_k = st.slider(
+                "Top-K Chunks",
+                min_value=2,
+                max_value=10,
+                value=int(st.session_state.top_k),
+                step=1,
+                help="Higher K = more context, but may increase noise/cost.",
+            )
+
 
         col1, col2 = st.columns(2)
         with col1:
