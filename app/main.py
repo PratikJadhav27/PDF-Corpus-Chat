@@ -30,6 +30,11 @@ from src.rag.vector_store import (
 from src.rag.retriever import retrieve_docs
 from src.rag.prompting import build_context_with_citations, build_grounded_prompt
 
+import time
+
+from src.eval.evaluator import evaluate_one, build_report
+from src.utils.json_export import to_pretty_json
+
 load_dotenv()
 
 # Configure Gemini API (used for token counting)
@@ -409,16 +414,16 @@ def main():
     st.header("Multi-PDF's 📚 - Chat Agent 🤖")
 
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-        [
-            "💬 Chat",
-            "📊 Document Stats",
-            "📜 Chat History",
-            "🔍 Advanced Search",
-            "🌐 Batch & Translation",
-            "⚙️ Collections & Cost",
-        ]
-    )
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "💬 Chat",
+        "📊 Document Stats",
+        "📜 Chat History",
+        "🔍 Advanced Search",
+        "🌐 Batch & Translation",
+        "⚙️ Collections & Cost",
+        "🧪 Evaluation",
+    ])
+
 
     # Collections
     collections = get_collections()
@@ -816,6 +821,125 @@ def main():
             st.metric("💵 Estimated Cost", f"${estimated_cost:.6f}")
         with col3:
             st.metric("📝 Total Conversations", len(st.session_state.chat_history))
+
+    # ---------------- Tab 7: Evaluation ----------------
+    with tab7:
+        st.subheader("🧪 RAG Evaluation Mode")
+        st.caption("Run batch questions to measure grounding quality and export results.")
+
+        collections = get_collections()
+        if not collections:
+            collections = ["default"]
+
+        eval_collection = st.selectbox("Select Collection", collections, key="eval_collection")
+
+        eval_questions_text = st.text_area(
+            "Evaluation Questions (one per line)",
+            height=180,
+            placeholder="Example:\nWhat is the main topic of the document?\nList key requirements mentioned.\nSummarize the conclusion.",
+        )
+
+        colA, colB, colC = st.columns(3)
+        with colA:
+            eval_mode = st.selectbox(
+                "Retrieval Mode",
+                ["similarity", "mmr"],
+                index=0,
+                key="eval_mode",
+            )
+        with colB:
+            eval_top_k = st.slider("Top-K", 2, 10, 4, 1, key="eval_top_k")
+        with colC:
+            eval_temperature = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1, key="eval_temp")
+
+        run_eval = st.button("🚀 Run Evaluation", type="primary")
+
+        if run_eval:
+            questions = [q.strip() for q in eval_questions_text.split("\n") if q.strip()]
+            if not questions:
+                st.error("Please enter at least 1 evaluation question.")
+            else:
+                embeddings = get_embeddings()
+                db = load_vector_store(eval_collection, embeddings)
+
+                if db is None:
+                    st.error("This collection is empty. Upload and process PDFs first.")
+                else:
+                    results = []
+                    progress = st.progress(0)
+
+                    for idx, q in enumerate(questions):
+                        start = time.time()
+
+                        # temporarily override session settings for evaluation
+                        docs = retrieve_docs(db, q, mode=eval_mode, k=eval_top_k)
+
+                        if not docs:
+                            answer = "I don't know based on the provided documents."
+                        else:
+                            context = build_context_with_citations(docs)
+                            prompt = build_grounded_prompt(context=context, question=q)
+
+                            model = ChatGoogleGenerativeAI(
+                                model="gemini-2.5-flash",
+                                temperature=eval_temperature,
+                            )
+                            answer = model.invoke(prompt).content
+
+                        latency = round(time.time() - start, 3)
+
+                        row = evaluate_one(q, answer, docs)
+                        row["latency_sec"] = latency
+                        results.append(row)
+
+                        progress.progress((idx + 1) / len(questions))
+
+                    report = build_report(
+                        collection_name=eval_collection,
+                        retrieval_mode=eval_mode,
+                        top_k=eval_top_k,
+                        results=results,
+                    )
+
+                    st.success("✅ Evaluation complete!")
+
+                    st.write("## 📊 Summary")
+                    summary = report["summary"]
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Questions", summary["total_questions"])
+                    with col2:
+                        st.metric("Citation Rate", f"{summary['citation_rate']}%")
+                    with col3:
+                        st.metric("IDK Rate", f"{summary['idk_rate']}%")
+                    with col4:
+                        st.metric("Avg Latency", f"{summary['avg_latency_sec']}s")
+
+                    st.write("---")
+                    st.write("## 📋 Results")
+                    for i, r in enumerate(report["results"], 1):
+                        with st.expander(f"Q{i}: {r['question']}"):
+                            st.write("**Answer:**")
+                            st.write(r["answer"])
+                            st.write("**Has Citations:**", r["has_citations"])
+                            st.write("**IDK Answer:**", r["is_idk"])
+
+                            with st.expander("Retrieved Sources"):
+                                for s in r.get("sources", []):
+                                    st.write(
+                                        f"- {s.get('source')} | page {s.get('page')} | chunk {s.get('chunk_index')}"
+                                    )
+
+                    st.write("---")
+                    st.write("## 📥 Export Report")
+                    report_json = to_pretty_json(report)
+
+                    st.download_button(
+                        label="Download JSON Report",
+                        data=report_json,
+                        file_name=f"rag_eval_report_{eval_collection}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                    )
 
     # ---------------- Sidebar: PDF Management ----------------
     with st.sidebar:
