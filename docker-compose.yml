@@ -1,0 +1,9 @@
+services:
+  pdf-corpus-chat:
+    build: .
+    container_name: pdf-corpus-chat
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    restart: unless-stopped
