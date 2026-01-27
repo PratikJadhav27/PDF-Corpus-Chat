@@ -1,6 +1,5 @@
 streamlit
 python-dotenv
-PyPDF2
 pypdf
 langchain
 langchain-community
@@ -8,4 +7,4 @@ langchain-core
 langchain-text-splitters
 langchain-google-genai
 faiss-cpu
-google-generativeai
+
