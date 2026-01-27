@@ -1,7 +1,31 @@
 # PDF Corpus Chat (Multi-PDF RAG)
 
-A clean, production-style **Multi-PDF Chat App** built using **Retrieval-Augmented Generation (RAG)**.  
-Upload multiple PDFs, organize them into collections, and chat with grounded answers based on your document corpus.
+A clean, production-style **Multi-PDF Chat Application** built using **Retrieval-Augmented Generation (RAG)**.  
+Upload multiple PDFs, organize them into collections, and chat with **grounded, citation-backed answers** based on your document corpus.
+
+---
+
+## 📋 Table of Contents
+
+- [PDF Corpus Chat (Multi-PDF RAG)](#pdf-corpus-chat-multi-pdf-rag)
+  - [📋 Table of Contents](#-table-of-contents)
+  - [✨ Features](#-features)
+  - [🧱 Tech Stack](#-tech-stack)
+  - [📁 Project Structure](#-project-structure)
+  - [🚀 Getting Started](#-getting-started)
+    - [Windows](#windows)
+    - [Mac / Linux](#mac--linux)
+    - [Docker](#docker)
+    - [Docker](#docker-1)
+  - [⚙️ Configuration](#️-configuration)
+    - [Chunking](#chunking)
+    - [Retrieval](#retrieval)
+  - [🧪 Evaluation Mode](#-evaluation-mode)
+  - [🔐 Environment Variables](#-environment-variables)
+    - [Required](#required)
+  - [🧭 Roadmap](#-roadmap)
+    - [Planned Improvements](#planned-improvements)
+  - [📜 License](#-license)
 
 ---
 
@@ -10,21 +34,21 @@ Upload multiple PDFs, organize them into collections, and chat with grounded ans
 - 📄 Upload and chat with **multiple PDFs**
 - 🗂️ Create and manage **Collections** (separate knowledge bases per topic/use-case)
 - 💾 Persistent **FAISS vector store** per collection
-- 🔍 Retrieval options: **Similarity** + **MMR** (more diverse context)
-- 🎛️ Configurable **Top-K** chunk retrieval
-- 📌 Grounded answers with **citations (source + page)**
-- 📊 **Extraction stats** (extracted/empty/failed pages per PDF)
-- 🧪 **Evaluation Mode**: run batch questions + export JSON reports
+- 🔍 Retrieval strategies: **Similarity** and **MMR** (diverse context retrieval)
+- 🎛️ Configurable **Top-K** chunk selection
+- 📌 **Citation-aware responses** (document + page)
+- 📊 **PDF extraction statistics** (extracted / empty / failed pages)
+- 🧪 **Evaluation Mode** for batch Q&A with JSON report export
 
 ---
 
 ## 🧱 Tech Stack
 
-- **Streamlit** — UI
-- **LangChain** — RAG pipeline
-- **Google Gemini** — LLM + embeddings
-- **FAISS** — vector similarity search
-- **PyPDF / PyPDF2** — PDF text extraction
+- **Streamlit** — User Interface  
+- **LangChain** — RAG pipeline  
+- **Google Gemini** — LLM + embeddings  
+- **FAISS** — Vector similarity search  
+- **PyPDF** — PDF text extraction  
 
 ---
 
@@ -50,124 +74,148 @@ PDF-Corpus-Chat/
 ├── Dockerfile
 ├── .dockerignore
 └── README.md
+```
 
 ---
 
-## 🚀 Getting Started (Windows)
+## 🚀 Getting Started
 
-1) Clone the repo
-git clone https://github.com/PratikJadhav27/PDF-Corpus-Chat.git
-cd PDF-Corpus-Chat
+### Windows
 
-2) Setup (creates venv + installs dependencies)
-.\scripts\setup.ps1
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/PratikJadhav27/PDF-Corpus-Chat.git
+   cd PDF-Corpus-Chat
+   ```
 
-3) Add API key
-Edit the .env file and set:
+2. **Setup** (creates virtual environment and installs dependencies)
+   ```bash
+   .\scripts\setup.ps1
+   ```
 
-GOOGLE_API_KEY=your_api_key_here
+3. **Add API key**
+   
+   Create a `.env` file in the project root and set:
+   ```
+   GOOGLE_API_KEY=your_api_key_here
+   ```
 
-4) Run the app
-.\scripts\run.ps1
+4. **Run the app**
+   ```bash
+   .\scripts\run.ps1
+   ```
+   
+   Open in browser: http://localhost:8501
 
-Open in browser:
-👉 http://localhost:8501
+### Mac / Linux
 
-## Getting Started (Mac/Linux)
+> **Note:** PowerShell scripts are Windows-only. Mac/Linux users can run the app manually.
 
-If you're on Mac/Linux, you can run the app manually (PowerShell scripts are Windows-only).
+1. **Create and activate virtual environment**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
 
-1) Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-2) Install dependencies
-pip install -r requirements.txt
+3. **Add environment variables**
+   
+   Create a `.env` file in the project root:
+   ```
+   GOOGLE_API_KEY=your_api_key_here
+   ```
 
-3) Add environment variables
-Create a .env file in the root folder:
+4. **Run the app**
+   ```bash
+   streamlit run app/main.py
+   ```
 
-GOOGLE_API_KEY=your_api_key_here
+### Docker
+### Docker
 
-4) Run the app
-streamlit run app/main.py
+1. **Add your API key**
+   
+   Create `.env` (or copy from `.env.example`) and set:
+   ```
+   GOOGLE_API_KEY=your_api_key_here
+   ```
+
+2. **Build and run**
+   ```bash
+   docker compose up --build
+   ```
+
+3. **Open the app**
+   
+   Visit: http://localhost:8501
+
+4. **Stop the container**
+   ```bash
+   docker compose down
+   ```
 
 ---
 
-## 🐳 Run with Docker
+## ⚙️ Configuration
 
-1) Add your API key
-Create .env (or copy from .env.example) and set:
+### Chunking
 
-GOOGLE_API_KEY=your_api_key_here
+- **Chunk size:** 1500 tokens
+- **Chunk overlap:** 200 tokens
 
-2) Build & run
-docker compose up --build
+### Retrieval
 
-3) Open the app
-👉 http://localhost:8501
+- **Default mode:** Similarity search
+- **Default Top-K:** 4 chunks
 
-To stop:
-
-docker compose down
-
-## ⚙️ Default Configuration
-
-Chunking
-Chunk size: 1500
-
-Chunk overlap: 200
-
-Retrieval
-Default mode: similarity
-
-Default Top-K: 4
+---
 
 ## 🧪 Evaluation Mode
-You can evaluate RAG quality using the Evaluation tab:
 
-Enter multiple questions (one per line)
+The **Evaluation** tab allows you to assess RAG quality:
 
-Choose retrieval mode (similarity / mmr)
+**Steps:**
+1. Enter multiple questions (one per line)
+2. Select retrieval mode (Similarity / MMR)
+3. Configure Top-K
+4. Run batch evaluation
+5. Export results as a JSON report
 
-Choose Top-K
+**Tracked Metrics:**
+- Citation rate
+- IDK (no-answer) rate
+- Latency per question
 
-Run evaluation
+---
 
-Export results as a JSON report
+## 🔐 Environment Variables
 
-This helps track:
+### Required
 
-Citation rate
+- `GOOGLE_API_KEY` — Google Gemini API key
 
-IDK rate
+> ⚠️ **Important:** Do NOT commit `.env` to GitHub. Add it to `.gitignore`.
 
-Latency per question
-
-🔐 Environment Variables
-Required:
-
-GOOGLE_API_KEY — Gemini API Key
-
-⚠️ Do NOT commit .env to GitHub.
+---
 
 ## 🧭 Roadmap
-This project is actively developed using a clean GitHub workflow:
 
-Issues → Branches → PRs → Merge
+This project follows a clean GitHub workflow: **Issues → Branches → Pull Requests → Merge**
 
-Planned improvements:
+### Planned Improvements
 
-Hybrid Search (BM25 + vector search)
+- [ ] Hybrid Search (BM25 + vector search)
+- [ ] Retrieval re-ranking
+- [ ] OCR detection for scanned PDFs
+- [ ] Improved citation visualization
+- [ ] CI pipeline and automated tests
 
-Reranking for improved retrieval precision
-
-OCR detection warning for scanned PDFs
-
-Better UI for citations and sources
-
-CI pipeline + unit tests
+---
 
 ## 📜 License
-This project is licensed under the MIT License.
 
+This project is licensed under the MIT License. See [LICENSE](LICENSE) file for details.
