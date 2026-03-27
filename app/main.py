@@ -24,6 +24,8 @@ from src.rag.vector_store import (
 from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
 from src.rag.prompting import build_context_with_citations, build_grounded_prompt
 from src.rag.bm25_index import save_chunk_corpus
+from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
+from src.rag.validators import guard_answer_with_citation_check, citation_validity
 
 import time
 
@@ -55,6 +57,8 @@ if "candidate_k" not in st.session_state:
     st.session_state.candidate_k = 12
 if "rerank_top_n" not in st.session_state:
     st.session_state.rerank_top_n = 4
+if "prompt_version" not in st.session_state:
+    st.session_state.prompt_version = DEFAULT_PROMPT_VERSION
 
 # -----------------------------
 # Utility / Collection helpers
@@ -257,8 +261,11 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
     # Build context with citation tags
     context = build_context_with_citations(docs)
 
-    # Strict grounded prompt (ignores prompt_type for now)
-    prompt = build_grounded_prompt(context=context, question=user_question)
+    prompt = build_grounded_prompt(
+        context=context,
+        question=user_question,
+        version=st.session_state.prompt_version,
+    )
 
     model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=temperature)
 
@@ -267,6 +274,9 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
     except Exception as e:
         st.error(f"Model error: {e}")
         return None, None
+
+    response = guard_answer_with_citation_check(response, docs, min_validity_ratio=0.8)
+    citation_stats = citation_validity(response, docs)
 
     # Token count (best effort)
     token_count = 0
@@ -289,6 +299,8 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
             "prompt_type": prompt_type,
             "tokens_used": token_count,
             "collection": collection_name,
+            "prompt_version": st.session_state.prompt_version,
+            "citation_validity_ratio": citation_stats.get("validity_ratio", 0.0),
         }
     )
 
@@ -530,6 +542,15 @@ def main():
                 help="Lower = more factual, Higher = more creative",
             )
 
+        st.session_state.prompt_version = st.selectbox(
+            "Prompt Version",
+            list(PROMPTS.keys()),
+            index=list(PROMPTS.keys()).index(st.session_state.prompt_version)
+            if st.session_state.prompt_version in PROMPTS
+            else 0,
+            help="Versioned grounded prompt templates.",
+        )
+
         st.info(
             f"📦 Collection: **{selected_collection}** | Chunking: **{CHUNKING.chunk_size}/{CHUNKING.chunk_overlap}** | Mode: **{st.session_state.retrieval_mode}** | Top-k: **{st.session_state.top_k}**"
         )
@@ -689,7 +710,9 @@ def main():
                     st.write(
                         f"**Type:** {chat['prompt_type']} | **Collection:** {chat.get('collection', 'default')}"
                     )
+                    st.write(f"**Prompt Version:** {chat.get('prompt_version', DEFAULT_PROMPT_VERSION)}")
                     st.write(f"**Tokens:** {chat.get('tokens_used', 0)}")
+                    st.write(f"**Citation Validity Ratio:** {chat.get('citation_validity_ratio', 0.0)}")
                     st.write(f"\n**Question:**\n{chat['question']}")
                     st.write(f"\n**Answer:**\n{chat['answer']}")
 
@@ -926,13 +949,20 @@ def main():
                             answer = "I don't know based on the provided documents."
                         else:
                             context = build_context_with_citations(docs)
-                            prompt = build_grounded_prompt(context=context, question=q)
+                            prompt = build_grounded_prompt(
+                                context=context,
+                                question=q,
+                                version=st.session_state.prompt_version,
+                            )
 
                             model = ChatGoogleGenerativeAI(
                                 model="gemini-2.5-flash",
                                 temperature=eval_temperature,
                             )
                             answer = model.invoke(prompt).content
+                            answer = guard_answer_with_citation_check(
+                                answer, docs, min_validity_ratio=0.8
+                            )
 
                         latency = round(time.time() - start, 3)
 
