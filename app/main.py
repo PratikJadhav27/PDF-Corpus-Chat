@@ -11,7 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from src.config import CHUNKING, RETRIEVAL
+from src.config import CHUNKING
 from src.ingestion.pdf_loader import load_pdf_pages_with_stats
 from src.ingestion.chunking import chunk_pdf_pages
 from src.rag.vector_store import (
@@ -21,8 +21,9 @@ from src.rag.vector_store import (
     get_embeddings,
 )
 
-from src.rag.retriever import retrieve_docs
+from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
 from src.rag.prompting import build_context_with_citations, build_grounded_prompt
+from src.rag.bm25_index import save_chunk_corpus
 
 import time
 
@@ -50,6 +51,10 @@ if "retrieval_mode" not in st.session_state:
     st.session_state.retrieval_mode = "similarity"
 if "top_k" not in st.session_state:
     st.session_state.top_k = 4
+if "candidate_k" not in st.session_state:
+    st.session_state.candidate_k = 12
+if "rerank_top_n" not in st.session_state:
+    st.session_state.rerank_top_n = 4
 
 # -----------------------------
 # Utility / Collection helpers
@@ -227,13 +232,22 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
         )
         return None, None
 
-    # Retrieve docs
-    docs = retrieve_docs(
-        db,
-        user_question,
-        mode=st.session_state.retrieval_mode,
-        k=st.session_state.top_k,
-    )
+    # Retrieve docs (supports hybrid -> fusion + rerank)
+    if st.session_state.retrieval_mode == "hybrid":
+        docs = retrieve_hybrid_reranked(
+            db=db,
+            collection_name=collection_name,
+            query=user_question,
+            top_k=st.session_state.rerank_top_n,
+            candidate_k=st.session_state.candidate_k,
+        )
+    else:
+        docs = retrieve_docs(
+            db,
+            user_question,
+            mode=st.session_state.retrieval_mode,
+            k=st.session_state.top_k,
+        )
 
 
     if not docs:
@@ -268,6 +282,7 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
                     "source": doc.metadata.get("source", "Unknown"),
                     "page": doc.metadata.get("page_number", "?"),
                     "chunk_index": doc.metadata.get("chunk_index", "?"),
+                    "retrieval": doc.metadata.get("retrieval"),
                 }
                 for doc in docs
             ],
@@ -333,6 +348,7 @@ def process_and_index_pdfs(pdf_docs, collection_name: str):
 
     vector_store = build_vector_store_from_chunks(chunks)
     save_vector_store(vector_store, safe_collection)
+    save_chunk_corpus(safe_collection, chunks)
 
     overall_success_rate = (
         round((extracted_pages_all / total_pages_all) * 100, 2)
@@ -458,9 +474,11 @@ def main():
         with colA:
             st.session_state.retrieval_mode = st.selectbox(
                 "Retrieval Mode",
-                ["similarity", "mmr"],
-                index=0 if st.session_state.retrieval_mode == "similarity" else 1,
-                help="MMR reduces repetitive chunks by retrieving diverse context.",
+                ["similarity", "mmr", "hybrid"],
+                index=["similarity", "mmr", "hybrid"].index(st.session_state.retrieval_mode)
+                if st.session_state.retrieval_mode in ["similarity", "mmr", "hybrid"]
+                else 0,
+                help="Hybrid uses vector + BM25 + RRF + reranking.",
             )
 
         with colB:
@@ -472,6 +490,27 @@ def main():
                 step=1,
                 help="Higher K = more context, but may increase noise/cost.",
             )
+
+        if st.session_state.retrieval_mode == "hybrid":
+            colH1, colH2 = st.columns(2)
+            with colH1:
+                st.session_state.candidate_k = st.slider(
+                    "Hybrid Candidate-K",
+                    min_value=6,
+                    max_value=30,
+                    value=int(st.session_state.candidate_k),
+                    step=2,
+                    help="Number of candidates from each retriever before fusion/rerank.",
+                )
+            with colH2:
+                st.session_state.rerank_top_n = st.slider(
+                    "Rerank Top-N",
+                    min_value=2,
+                    max_value=10,
+                    value=int(st.session_state.rerank_top_n),
+                    step=1,
+                    help="Final number of chunks after reranking.",
+                )
 
 
         col1, col2 = st.columns(2)
@@ -492,7 +531,7 @@ def main():
             )
 
         st.info(
-            f"📦 Collection: **{selected_collection}** | Chunking: **{CHUNKING.chunk_size}/{CHUNKING.chunk_overlap}** | Top-k: **{RETRIEVAL.top_k}**"
+            f"📦 Collection: **{selected_collection}** | Chunking: **{CHUNKING.chunk_size}/{CHUNKING.chunk_overlap}** | Mode: **{st.session_state.retrieval_mode}** | Top-k: **{st.session_state.top_k}**"
         )
 
         if ask_button and user_question:
@@ -659,6 +698,12 @@ def main():
                             st.write(
                                 f"- {s.get('source', 'Unknown')} | Page {s.get('page', '?')} | Chunk {s.get('chunk_index', '?')}"
                             )
+                            retrieval_dbg = s.get("retrieval")
+                            if retrieval_dbg:
+                                st.caption(
+                                    f"rrf={retrieval_dbg.get('rrf_score')} | rerank={retrieval_dbg.get('rerank_score')} | "
+                                    f"vector={retrieval_dbg.get('vector_score')} | bm25={retrieval_dbg.get('bm25_score')}"
+                                )
 
             st.markdown("---")
             col1, col2 = st.columns(2)
@@ -837,7 +882,7 @@ def main():
         with colA:
             eval_mode = st.selectbox(
                 "Retrieval Mode",
-                ["similarity", "mmr"],
+                ["similarity", "mmr", "hybrid"],
                 index=0,
                 key="eval_mode",
             )
@@ -866,7 +911,16 @@ def main():
                         start = time.time()
 
                         # temporarily override session settings for evaluation
-                        docs = retrieve_docs(db, q, mode=eval_mode, k=eval_top_k)
+                        if eval_mode == "hybrid":
+                            docs = retrieve_hybrid_reranked(
+                                db=db,
+                                collection_name=eval_collection,
+                                query=q,
+                                top_k=eval_top_k,
+                                candidate_k=max(12, eval_top_k * 3),
+                            )
+                        else:
+                            docs = retrieve_docs(db, q, mode=eval_mode, k=eval_top_k)
 
                         if not docs:
                             answer = "I don't know based on the provided documents."
