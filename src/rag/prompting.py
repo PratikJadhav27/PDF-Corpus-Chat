@@ -1,5 +1,6 @@
 from typing import List
 from langchain_core.documents import Document
+from src.rag.prompt_registry import get_prompt_template
 
 
 def build_context_with_citations(docs: List[Document]) -> str:
@@ -17,25 +18,7 @@ def build_context_with_citations(docs: List[Document]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def build_grounded_prompt(context: str, question: str) -> str:
-    return f"""
-You are a strict document-grounded assistant.
-
-You MUST follow these rules:
-- Use ONLY the context provided.
-- If the answer is not explicitly present in the context, reply exactly:
-I don't know based on the provided documents.
-- Every sentence in your answer MUST end with a citation in this exact format:
-[<source> | page <page_number>]
-- Do NOT add citations that are not in the context.
-- Do NOT use outside knowledge.
-
-CONTEXT:
-{context}
-
-QUESTION:
-{question}
-
-ANSWER (with citations at end of every sentence):
-""".strip()
+def build_grounded_prompt(context: str, question: str, version: str = "v1_strict") -> str:
+    template = get_prompt_template(version)
+    return template.format(context=context, question=question)
 

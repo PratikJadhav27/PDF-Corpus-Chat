@@ -2,6 +2,7 @@ import time
 import re
 from typing import Dict, Any, List
 from datetime import datetime
+from src.rag.validators import citation_validity
 
 
 CITATION_PATTERN = re.compile(r"\[[^\]]+\|\s*page\s*\d+\]", re.IGNORECASE)
@@ -36,11 +37,16 @@ def evaluate_one(question: str, answer: str, docs) -> Dict[str, Any]:
             }
         )
 
+    validity = citation_validity(answer, docs or [])
+
     return {
         "question": question,
         "answer": answer,
         "has_citations": has_citations(answer),
         "is_idk": is_idk_answer(answer),
+        "citation_validity_ratio": validity.get("validity_ratio", 0.0),
+        "citation_count": validity.get("citation_count", 0),
+        "valid_citation_count": validity.get("valid_citation_count", 0),
         "sources": sources,
     }
 
@@ -58,12 +64,14 @@ def summarize_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     citation_count = sum(1 for r in results if r.get("has_citations"))
     idk_count = sum(1 for r in results if r.get("is_idk"))
     latencies = [r.get("latency_sec", 0.0) for r in results]
+    validity_scores = [r.get("citation_validity_ratio", 0.0) for r in results]
 
     return {
         "total_questions": total,
         "citation_rate": round((citation_count / total) * 100, 2),
         "idk_rate": round((idk_count / total) * 100, 2),
         "avg_latency_sec": round(sum(latencies) / total, 3),
+        "avg_citation_validity_ratio": round(sum(validity_scores) / total, 4),
     }
 
 
