@@ -26,8 +26,11 @@ from src.rag.prompting import build_context_with_citations, build_grounded_promp
 from src.rag.bm25_index import save_chunk_corpus
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
 from src.rag.validators import guard_answer_with_citation_check, citation_validity
+from src.observability.tracing import append_rag_trace, build_trace_record, new_trace_id
 
 import time
+
+LLM_MODEL_NAME = "gemini-2.5-flash"
 
 from src.eval.evaluator import evaluate_one, build_report
 from src.utils.json_export import to_pretty_json
@@ -227,15 +230,42 @@ Detailed Answer:""",
 
 
 def user_input(user_question, prompt_type, temperature, collection_name="default"):
+    trace_id = new_trace_id()
+    t0 = time.time()
+
     embeddings = get_embeddings()
 
     db = load_vector_store(collection_name, embeddings)
     if db is None:
+        append_rag_trace(
+            build_trace_record(
+                trace_id=trace_id,
+                phase="chat",
+                collection=collection_name,
+                query=user_question,
+                retrieval_mode=st.session_state.retrieval_mode,
+                prompt_version=st.session_state.prompt_version,
+                model_name=LLM_MODEL_NAME,
+                temperature=temperature,
+                top_k=st.session_state.top_k,
+                candidate_k=st.session_state.candidate_k
+                if st.session_state.retrieval_mode == "hybrid"
+                else None,
+                rerank_top_n=st.session_state.rerank_top_n
+                if st.session_state.retrieval_mode == "hybrid"
+                else None,
+                docs=[],
+                latency_sec={"total_sec": round(time.time() - t0, 4)},
+                error="vector_store_missing",
+                prompt_style=prompt_type,
+            )
+        )
         st.error(
             f"Please upload and process PDF files first in collection '{collection_name}'!"
         )
         return None, None
 
+    t_r0 = time.time()
     # Retrieve docs (supports hybrid -> fusion + rerank)
     if st.session_state.retrieval_mode == "hybrid":
         docs = retrieve_hybrid_reranked(
@@ -252,10 +282,37 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
             mode=st.session_state.retrieval_mode,
             k=st.session_state.top_k,
         )
-
+    t_r1 = time.time()
+    retrieval_sec = round(t_r1 - t_r0, 4)
 
     if not docs:
         response = "I don't know based on the provided documents."
+        append_rag_trace(
+            build_trace_record(
+                trace_id=trace_id,
+                phase="chat",
+                collection=collection_name,
+                query=user_question,
+                retrieval_mode=st.session_state.retrieval_mode,
+                prompt_version=st.session_state.prompt_version,
+                model_name=LLM_MODEL_NAME,
+                temperature=temperature,
+                top_k=st.session_state.top_k,
+                candidate_k=st.session_state.candidate_k
+                if st.session_state.retrieval_mode == "hybrid"
+                else None,
+                rerank_top_n=st.session_state.rerank_top_n
+                if st.session_state.retrieval_mode == "hybrid"
+                else None,
+                docs=[],
+                latency_sec={
+                    "retrieval_sec": retrieval_sec,
+                    "total_sec": round(time.time() - t0, 4),
+                },
+                answer_preview=response[:500],
+                prompt_style=prompt_type,
+            )
+        )
         return response, []
 
     # Build context with citation tags
@@ -267,16 +324,75 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
         version=st.session_state.prompt_version,
     )
 
-    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=temperature)
+    model = ChatGoogleGenerativeAI(model=LLM_MODEL_NAME, temperature=temperature)
 
+    t_l0 = time.time()
     try:
         response = model.invoke(prompt).content
     except Exception as e:
+        append_rag_trace(
+            build_trace_record(
+                trace_id=trace_id,
+                phase="chat",
+                collection=collection_name,
+                query=user_question,
+                retrieval_mode=st.session_state.retrieval_mode,
+                prompt_version=st.session_state.prompt_version,
+                model_name=LLM_MODEL_NAME,
+                temperature=temperature,
+                top_k=st.session_state.top_k,
+                candidate_k=st.session_state.candidate_k
+                if st.session_state.retrieval_mode == "hybrid"
+                else None,
+                rerank_top_n=st.session_state.rerank_top_n
+                if st.session_state.retrieval_mode == "hybrid"
+                else None,
+                docs=docs,
+                latency_sec={
+                    "retrieval_sec": retrieval_sec,
+                    "llm_sec": round(time.time() - t_l0, 4),
+                    "total_sec": round(time.time() - t0, 4),
+                },
+                error=str(e),
+                prompt_style=prompt_type,
+            )
+        )
         st.error(f"Model error: {e}")
         return None, None
+    t_l1 = time.time()
+    llm_sec = round(t_l1 - t_l0, 4)
 
     response = guard_answer_with_citation_check(response, docs, min_validity_ratio=0.8)
     citation_stats = citation_validity(response, docs)
+
+    append_rag_trace(
+        build_trace_record(
+            trace_id=trace_id,
+            phase="chat",
+            collection=collection_name,
+            query=user_question,
+            retrieval_mode=st.session_state.retrieval_mode,
+            prompt_version=st.session_state.prompt_version,
+            model_name=LLM_MODEL_NAME,
+            temperature=temperature,
+            top_k=st.session_state.top_k,
+            candidate_k=st.session_state.candidate_k
+            if st.session_state.retrieval_mode == "hybrid"
+            else None,
+            rerank_top_n=st.session_state.rerank_top_n
+            if st.session_state.retrieval_mode == "hybrid"
+            else None,
+            docs=docs,
+            latency_sec={
+                "retrieval_sec": retrieval_sec,
+                "llm_sec": llm_sec,
+                "total_sec": round(time.time() - t0, 4),
+            },
+            citation_validity_ratio=citation_stats.get("validity_ratio", 0.0),
+            answer_preview=(response or "")[:500],
+            prompt_style=prompt_type,
+        )
+    )
 
     # Token count (best effort)
     token_count = 0
@@ -287,6 +403,7 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "question": user_question,
             "answer": response,
+            "trace_id": trace_id,
             "sources": [
                 {
                     "source": doc.metadata.get("source", "Unknown"),
@@ -707,6 +824,8 @@ def main():
                     f"💬 Q{len(filtered_history) - i + 1}: {chat['question'][:60]}..."
                 ):
                     st.write(f"**Time:** {chat['timestamp']}")
+                    if chat.get("trace_id"):
+                        st.caption(f"trace_id: {chat['trace_id']}")
                     st.write(
                         f"**Type:** {chat['prompt_type']} | **Collection:** {chat.get('collection', 'default')}"
                     )
@@ -931,7 +1050,9 @@ def main():
                     progress = st.progress(0)
 
                     for idx, q in enumerate(questions):
+                        eval_trace_id = new_trace_id()
                         start = time.time()
+                        t_r0 = time.time()
 
                         # temporarily override session settings for evaluation
                         if eval_mode == "hybrid":
@@ -945,8 +1066,36 @@ def main():
                         else:
                             docs = retrieve_docs(db, q, mode=eval_mode, k=eval_top_k)
 
+                        t_r1 = time.time()
+                        retrieval_sec = round(t_r1 - t_r0, 4)
+
                         if not docs:
                             answer = "I don't know based on the provided documents."
+                            append_rag_trace(
+                                build_trace_record(
+                                    trace_id=eval_trace_id,
+                                    phase="eval",
+                                    collection=eval_collection,
+                                    query=q,
+                                    retrieval_mode=eval_mode,
+                                    prompt_version=st.session_state.prompt_version,
+                                    model_name=LLM_MODEL_NAME,
+                                    temperature=eval_temperature,
+                                    top_k=eval_top_k,
+                                    candidate_k=max(12, eval_top_k * 3)
+                                    if eval_mode == "hybrid"
+                                    else None,
+                                    rerank_top_n=eval_top_k if eval_mode == "hybrid" else None,
+                                    docs=[],
+                                    latency_sec={
+                                        "retrieval_sec": retrieval_sec,
+                                        "total_sec": round(time.time() - start, 4),
+                                    },
+                                    answer_preview=answer[:500],
+                                    eval_index=idx + 1,
+                                    eval_total=len(questions),
+                                )
+                            )
                         else:
                             context = build_context_with_citations(docs)
                             prompt = build_grounded_prompt(
@@ -956,12 +1105,73 @@ def main():
                             )
 
                             model = ChatGoogleGenerativeAI(
-                                model="gemini-2.5-flash",
+                                model=LLM_MODEL_NAME,
                                 temperature=eval_temperature,
                             )
-                            answer = model.invoke(prompt).content
+                            t_l0 = time.time()
+                            try:
+                                answer = model.invoke(prompt).content
+                            except Exception as e:
+                                append_rag_trace(
+                                    build_trace_record(
+                                        trace_id=eval_trace_id,
+                                        phase="eval",
+                                        collection=eval_collection,
+                                        query=q,
+                                        retrieval_mode=eval_mode,
+                                        prompt_version=st.session_state.prompt_version,
+                                        model_name=LLM_MODEL_NAME,
+                                        temperature=eval_temperature,
+                                        top_k=eval_top_k,
+                                        candidate_k=max(12, eval_top_k * 3)
+                                        if eval_mode == "hybrid"
+                                        else None,
+                                        rerank_top_n=eval_top_k
+                                        if eval_mode == "hybrid"
+                                        else None,
+                                        docs=docs,
+                                        latency_sec={
+                                            "retrieval_sec": retrieval_sec,
+                                            "llm_sec": round(time.time() - t_l0, 4),
+                                            "total_sec": round(time.time() - start, 4),
+                                        },
+                                        error=str(e),
+                                        eval_index=idx + 1,
+                                        eval_total=len(questions),
+                                    )
+                                )
+                                raise
+                            llm_sec = round(time.time() - t_l0, 4)
                             answer = guard_answer_with_citation_check(
                                 answer, docs, min_validity_ratio=0.8
+                            )
+                            cv = citation_validity(answer, docs)
+                            append_rag_trace(
+                                build_trace_record(
+                                    trace_id=eval_trace_id,
+                                    phase="eval",
+                                    collection=eval_collection,
+                                    query=q,
+                                    retrieval_mode=eval_mode,
+                                    prompt_version=st.session_state.prompt_version,
+                                    model_name=LLM_MODEL_NAME,
+                                    temperature=eval_temperature,
+                                    top_k=eval_top_k,
+                                    candidate_k=max(12, eval_top_k * 3)
+                                    if eval_mode == "hybrid"
+                                    else None,
+                                    rerank_top_n=eval_top_k if eval_mode == "hybrid" else None,
+                                    docs=docs,
+                                    latency_sec={
+                                        "retrieval_sec": retrieval_sec,
+                                        "llm_sec": llm_sec,
+                                        "total_sec": round(time.time() - start, 4),
+                                    },
+                                    citation_validity_ratio=cv.get("validity_ratio", 0.0),
+                                    answer_preview=(answer or "")[:500],
+                                    eval_index=idx + 1,
+                                    eval_total=len(questions),
+                                )
                             )
 
                         latency = round(time.time() - start, 3)
@@ -983,7 +1193,7 @@ def main():
 
                     st.write("## 📊 Summary")
                     summary = report["summary"]
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3, col4, col5 = st.columns(5)
                     with col1:
                         st.metric("Total Questions", summary["total_questions"])
                     with col2:
@@ -992,6 +1202,11 @@ def main():
                         st.metric("IDK Rate", f"{summary['idk_rate']}%")
                     with col4:
                         st.metric("Avg Latency", f"{summary['avg_latency_sec']}s")
+                    with col5:
+                        st.metric(
+                            "Avg Citation Validity",
+                            summary.get("avg_citation_validity_ratio", 0.0),
+                        )
 
                     st.write("---")
                     st.write("## 📋 Results")
