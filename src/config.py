@@ -13,5 +13,14 @@ class RetrievalConfig:
     mode: str = "similarity"  # "similarity" or "mmr"
 
 
+@dataclass(frozen=True)
+class ObservabilityConfig:
+    """Local JSONL tracing; toggle via OBSERVABILITY_ENABLED env."""
+
+    enabled: bool = False
+    traces_path: str = "logs/rag_traces.jsonl"
+
+
 CHUNKING = ChunkingConfig()
 RETRIEVAL = RetrievalConfig()
+OBSERVABILITY = ObservabilityConfig()

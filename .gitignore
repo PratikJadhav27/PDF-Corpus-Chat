@@ -25,3 +25,6 @@ Thumbs.db
 metadata/
 data/
 vector_stores/
+
+# Request traces (local JSONL)
+logs/

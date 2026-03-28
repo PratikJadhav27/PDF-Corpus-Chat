@@ -58,6 +58,7 @@ def summarize_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             "citation_rate": 0.0,
             "idk_rate": 0.0,
             "avg_latency_sec": 0.0,
+            "avg_citation_validity_ratio": 0.0,
         }
 
     total = len(results)
