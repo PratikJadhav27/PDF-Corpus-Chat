@@ -1,5 +1,19 @@
+# =============================================================================
+# DEPRECATED — LEGACY READONLY
+# =============================================================================
+# This file is the original v1 app before the production RAG upgrade.
+# It MUST NOT be modified or run in production.
+#
+# The canonical runtime entry point is: app/main.py
+#   Run with: streamlit run app/main.py
+#
+# This file is preserved in git history for reference only.
+# See README.md for the current architecture and evaluation framework.
+# =============================================================================
+
 import streamlit as st
 from PyPDF2 import PdfReader
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings

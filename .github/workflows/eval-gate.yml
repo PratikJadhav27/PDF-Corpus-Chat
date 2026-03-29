@@ -1,0 +1,122 @@
+name: RAG Eval Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+jobs:
+  eval-gate:
+    name: Golden Dataset Evaluation Gate
+    runs-on: ubuntu-latest
+
+    env:
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      COLLECTION: ci_collection
+      RETRIEVAL_MODE: hybrid
+      TOP_K: 4
+      FAITHFULNESS_THRESHOLD: "0.85"
+      CITATION_VALIDITY_THRESHOLD: "0.90"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # -----------------------------------------------------------------
+      # Unit Tests (fast, no API key needed)
+      # -----------------------------------------------------------------
+      - name: Run unit tests
+        run: |
+          pytest tests/test_fusion.py tests/test_validators.py tests/test_retriever.py \
+            -v --tb=short
+
+      # -----------------------------------------------------------------
+      # Ingest CI collection from sample PDF fixture (if present)
+      # This step is a no-op if the fixture doesn't exist, but provides
+      # a hook for teams to add a small test PDF to evals/fixtures/.
+      # -----------------------------------------------------------------
+      - name: Check for CI fixture PDFs
+        id: check_fixtures
+        run: |
+          if [ -d "evals/fixtures" ] && [ "$(ls -A evals/fixtures/*.pdf 2>/dev/null)" ]; then
+            echo "fixtures_exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "fixtures_exist=false" >> $GITHUB_OUTPUT
+            echo "[INFO] No fixture PDFs found in evals/fixtures/ — skipping ingestion + eval gate."
+          fi
+
+      - name: Ingest fixture PDFs into CI collection
+        if: steps.check_fixtures.outputs.fixtures_exist == 'true'
+        run: |
+          python - <<'EOF'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path.cwd()))
+          from dotenv import load_dotenv
+          load_dotenv()
+          from src.ingestion.pdf_loader import load_pdf_pages_with_stats
+          from src.ingestion.chunking import chunk_pdf_pages
+          from src.rag.vector_store import build_vector_store_from_chunks, save_vector_store
+          from src.rag.bm25_index import save_chunk_corpus
+
+          COLLECTION = os.environ["COLLECTION"]
+          fixture_dir = Path("evals/fixtures")
+          all_pages = []
+          for pdf_path in fixture_dir.glob("*.pdf"):
+              print(f"Loading {pdf_path.name}...")
+              import io
+              with open(pdf_path, "rb") as f:
+                  class _FakePDF:
+                      name = pdf_path.name
+                      read = f.read
+                  pages, stats = load_pdf_pages_with_stats(_FakePDF())
+              all_pages.extend(pages)
+          chunks = chunk_pdf_pages(all_pages)
+          vs = build_vector_store_from_chunks(chunks)
+          save_vector_store(vs, COLLECTION)
+          save_chunk_corpus(COLLECTION, chunks)
+          print(f"Ingested {len(chunks)} chunks into '{COLLECTION}'.")
+          EOF
+
+      # -----------------------------------------------------------------
+      # Run the golden-dataset eval and gate on thresholds
+      # -----------------------------------------------------------------
+      - name: Run Eval Gate
+        if: steps.check_fixtures.outputs.fixtures_exist == 'true'
+        run: |
+          python scripts/run_eval.py \
+            --collection "$COLLECTION" \
+            --mode "$RETRIEVAL_MODE" \
+            --top-k "$TOP_K" \
+            --dataset evals/golden_dataset.jsonl.template \
+            --output evals/reports/ci_report.json \
+            --faithfulness-threshold "$FAITHFULNESS_THRESHOLD" \
+            --citation-validity-threshold "$CITATION_VALIDITY_THRESHOLD"
+
+      # -----------------------------------------------------------------
+      # Upload report as artifact for debugging
+      # -----------------------------------------------------------------
+      - name: Upload eval report artifact
+        if: always() && steps.check_fixtures.outputs.fixtures_exist == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-report-${{ github.run_id }}
+          path: evals/reports/ci_report.json
+          retention-days: 30

@@ -28,3 +28,5 @@ vector_stores/
 
 # Request traces (local JSONL)
 logs/
+
+evals/reports/*.json
