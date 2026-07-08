@@ -2,7 +2,8 @@ import os
 from typing import List, Dict, Any, Optional
 
 from langchain_community.vectorstores import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+from src.rag.embeddings import get_embeddings  # centralised embedding factory
 
 
 def sanitize_collection_name(name: str) -> str:
@@ -10,29 +11,6 @@ def sanitize_collection_name(name: str) -> str:
     safe = name.strip().replace(" ", "_")
     return safe if safe else "default"
 
-
-def get_embeddings():
-    import urllib.request
-    import json
-    import os
-    
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if api_key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req) as response:
-                data = json.loads(response.read())
-            
-            for model in data.get("models", []):
-                if "embedContent" in model.get("supportedGenerationMethods", []):
-                    # Found an available embedding model
-                    return GoogleGenerativeAIEmbeddings(model=model["name"])
-        except Exception as e:
-            print(f"Failed to dynamically fetch models: {e}")
-            
-    # Fallback default if API check fails or key is missing
-    return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
 
 def get_collection_dir(collection_name: str) -> str:
