@@ -30,3 +30,6 @@ vector_stores/
 logs/
 
 evals/reports/*.json
+
+# Legacy / deprecated files (kept locally for reference only)
+chatapp.py

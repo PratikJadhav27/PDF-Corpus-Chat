@@ -481,7 +481,7 @@ def process_and_index_pdfs(pdf_docs, collection_name: str):
             },
         }
 
-    vector_store = build_vector_store_from_chunks(chunks)
+    vector_store = build_vector_store_from_chunks(chunks, safe_collection)
     save_vector_store(vector_store, safe_collection)
     save_chunk_corpus(safe_collection, chunks)
 
