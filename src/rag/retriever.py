@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.documents import Document
-from langchain_community.vectorstores import FAISS
+from langchain_qdrant import QdrantVectorStore
 
 from src.config import RETRIEVAL
 from src.rag.bm25_index import bm25_search_collection
@@ -9,7 +9,7 @@ from src.rag.reranker import rerank_candidates
 
 
 def retrieve_docs(
-    db: FAISS,
+    db: QdrantVectorStore,
     query: str,
     mode: Optional[str] = None,
     k: Optional[int] = None,
@@ -29,7 +29,7 @@ def retrieve_docs(
 
 
 def _vector_hits_with_scores(
-    db: FAISS,
+    db: QdrantVectorStore,
     query: str,
     k: int,
 ) -> List[Tuple[Dict[str, Any], float]]:
@@ -49,7 +49,7 @@ def _vector_hits_with_scores(
 
 
 def retrieve_hybrid_reranked(
-    db: FAISS,
+    db: QdrantVectorStore,
     collection_name: str,
     query: str,
     top_k: int = 4,

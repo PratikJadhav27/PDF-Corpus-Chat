@@ -1,7 +1,8 @@
 import os
 from typing import List, Dict, Any, Optional
 
-from langchain_community.vectorstores import FAISS
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
 
 from src.rag.embeddings import get_embeddings  # centralised embedding factory
 
@@ -12,39 +13,54 @@ def sanitize_collection_name(name: str) -> str:
     return safe if safe else "default"
 
 
-
 def get_collection_dir(collection_name: str) -> str:
+    # Kept for compatibility but we use a single Qdrant DB path for all collections
     safe_name = sanitize_collection_name(collection_name)
     return f"vector_stores/{safe_name}"
 
-
-def save_vector_store(vector_store: FAISS, collection_name: str):
-    collection_dir = get_collection_dir(collection_name)
-    os.makedirs(collection_dir, exist_ok=True)
-    vector_store.save_local(collection_dir)
+QDRANT_PATH = "vector_stores/qdrant_db"
 
 
-def load_vector_store(collection_name: str, embeddings) -> Optional[FAISS]:
-    collection_dir = get_collection_dir(collection_name)
+def save_vector_store(vector_store: Any, collection_name: str):
+    # Qdrant persists automatically if path is provided, so this is a no-op
+    pass
 
-    index_path = os.path.join(collection_dir, "index.faiss")
-    store_path = os.path.join(collection_dir, "index.pkl")
 
-    # If FAISS files don't exist, treat as empty collection
-    if not (os.path.exists(index_path) and os.path.exists(store_path)):
+def load_vector_store(collection_name: str, embeddings) -> Optional[QdrantVectorStore]:
+    safe_name = sanitize_collection_name(collection_name)
+    
+    if not os.path.exists(QDRANT_PATH):
         return None
 
-    return FAISS.load_local(
-        collection_dir,
-        embeddings,
-        allow_dangerous_deserialization=True,
+    client = QdrantClient(path=QDRANT_PATH)
+    
+    try:
+        collections = client.get_collections().collections
+        if not any(c.name == safe_name for c in collections):
+            return None
+    except Exception:
+        return None
+
+    return QdrantVectorStore(
+        client=client,
+        collection_name=safe_name,
+        embedding=embeddings,
     )
 
 
-def build_vector_store_from_chunks(chunks: List[Dict[str, Any]]) -> FAISS:
+def build_vector_store_from_chunks(chunks: List[Dict[str, Any]], collection_name: str = "default") -> QdrantVectorStore:
     embeddings = get_embeddings()
+    safe_name = sanitize_collection_name(collection_name)
 
     texts = [c["text"] for c in chunks]
     metadatas = [c["metadata"] for c in chunks]
 
-    return FAISS.from_texts(texts=texts, embedding=embeddings, metadatas=metadatas)
+    os.makedirs(QDRANT_PATH, exist_ok=True)
+
+    return QdrantVectorStore.from_texts(
+        texts=texts,
+        embedding=embeddings,
+        metadatas=metadatas,
+        path=QDRANT_PATH,
+        collection_name=safe_name,
+    )
