@@ -11,3 +11,4 @@ qdrant-client
 langchain-qdrant
 pytest
 pytest-mock
+dspy-ai
