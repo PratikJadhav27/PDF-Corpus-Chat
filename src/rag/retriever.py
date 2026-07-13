@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
-from langfuse.decorators import observe
+from langfuse import observe
 
 from src.config import RETRIEVAL
 from src.rag.bm25_index import bm25_search_collection

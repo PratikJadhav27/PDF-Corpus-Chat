@@ -20,7 +20,7 @@ def is_idk_answer(answer: str) -> bool:
     return "i don't know based on the provided documents" in answer.lower()
 
 
-from langfuse.decorators import observe
+from langfuse import observe
 
 @observe()
 def evaluate_one(
