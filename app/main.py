@@ -235,6 +235,9 @@ Detailed Answer:""",
     return chain
 
 
+from langfuse.decorators import observe, langfuse_context
+
+@observe()
 def user_input(user_question, prompt_type, temperature, collection_name="default"):
     trace_id = new_trace_id()
     t0 = time.time()
@@ -334,7 +337,11 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
 
     t_l0 = time.time()
     try:
-        response = model.invoke(prompt).content
+        langfuse_handler = langfuse_context.get_current_langchain_handler()
+        response = model.invoke(
+            prompt, 
+            config={"callbacks": [langfuse_handler]} if langfuse_handler else None
+        ).content
     except Exception as e:
         append_rag_trace(
             build_trace_record(

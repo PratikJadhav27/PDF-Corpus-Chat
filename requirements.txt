@@ -12,3 +12,4 @@ langchain-qdrant
 pytest
 pytest-mock
 dspy-ai
+langfuse
