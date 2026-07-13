@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
+from langfuse import observe
 
 from src.config import RETRIEVAL
 from src.rag.bm25_index import bm25_search_collection
@@ -8,6 +9,7 @@ from src.rag.fusion import rrf_fuse
 from src.rag.reranker import rerank_candidates
 
 
+@observe(as_type="retrieval")
 def retrieve_docs(
     db: QdrantVectorStore,
     query: str,
@@ -48,6 +50,7 @@ def _vector_hits_with_scores(
     return rows
 
 
+@observe(as_type="retrieval")
 def retrieve_hybrid_reranked(
     db: QdrantVectorStore,
     collection_name: str,
