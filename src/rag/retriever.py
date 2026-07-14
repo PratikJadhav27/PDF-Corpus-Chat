@@ -9,7 +9,7 @@ from src.rag.fusion import rrf_fuse
 from src.rag.reranker import rerank_candidates
 
 
-@observe(as_type="retrieval")
+@observe(as_type="retriever")
 def retrieve_docs(
     db: QdrantVectorStore,
     query: str,
@@ -50,7 +50,7 @@ def _vector_hits_with_scores(
     return rows
 
 
-@observe(as_type="retrieval")
+@observe(as_type="retriever")
 def retrieve_hybrid_reranked(
     db: QdrantVectorStore,
     collection_name: str,

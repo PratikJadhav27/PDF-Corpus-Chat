@@ -116,6 +116,7 @@ def check_thresholds(
     summary: Dict[str, Any],
     faithfulness_threshold: float,
     citation_validity_threshold: float,
+    composite_score_threshold: float,
 ) -> List[str]:
     """Return a list of violation messages; empty list means all pass."""
     violations = []
@@ -130,6 +131,12 @@ def check_thresholds(
     if avg_cit < citation_validity_threshold:
         violations.append(
             f"avg_citation_validity_ratio={avg_cit:.4f} < threshold={citation_validity_threshold}"
+        )
+
+    avg_comp = summary.get("avg_composite_score")
+    if avg_comp is not None and avg_comp < composite_score_threshold:
+        violations.append(
+            f"avg_composite_score={avg_comp:.4f} < threshold={composite_score_threshold}"
         )
 
     return violations
@@ -196,6 +203,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.90,
         help="Minimum acceptable avg citation validity ratio.",
+    )
+    p.add_argument(
+        "--composite-score-threshold",
+        type=float,
+        default=0.85,
+        help="Minimum acceptable avg composite score.",
     )
     return p.parse_args()
 
@@ -311,6 +324,7 @@ def main() -> int:
         summary,
         faithfulness_threshold=args.faithfulness_threshold,
         citation_validity_threshold=args.citation_validity_threshold,
+        composite_score_threshold=args.composite_score_threshold,
     )
 
     if violations:
