@@ -18,6 +18,7 @@ jobs:
       TOP_K: 4
       FAITHFULNESS_THRESHOLD: "0.85"
       CITATION_VALIDITY_THRESHOLD: "0.90"
+      COMPOSITE_SCORE_THRESHOLD: "1.0"
 
     steps:
       - name: Checkout code
@@ -83,13 +84,14 @@ jobs:
               print(f"Loading {pdf_path.name}...")
               import io
               with open(pdf_path, "rb") as f:
-                  class _FakePDF:
+                  class _FakePDF(io.BytesIO):
                       name = pdf_path.name
-                      read = f.read
-                  pages, stats = load_pdf_pages_with_stats(_FakePDF())
+                  
+                  pdf_obj = _FakePDF(f.read())
+                  pages, stats = load_pdf_pages_with_stats(pdf_obj)
               all_pages.extend(pages)
           chunks = chunk_pdf_pages(all_pages)
-          vs = build_vector_store_from_chunks(chunks)
+          vs = build_vector_store_from_chunks(chunks, COLLECTION)
           save_vector_store(vs, COLLECTION)
           save_chunk_corpus(COLLECTION, chunks)
           print(f"Ingested {len(chunks)} chunks into '{COLLECTION}'.")
@@ -108,7 +110,8 @@ jobs:
             --dataset evals/golden_dataset.jsonl.template \
             --output evals/reports/ci_report.json \
             --faithfulness-threshold "$FAITHFULNESS_THRESHOLD" \
-            --citation-validity-threshold "$CITATION_VALIDITY_THRESHOLD"
+            --citation-validity-threshold "$CITATION_VALIDITY_THRESHOLD" \
+            --composite-score-threshold "$COMPOSITE_SCORE_THRESHOLD"
 
       # -----------------------------------------------------------------
       # Upload report as artifact for debugging
