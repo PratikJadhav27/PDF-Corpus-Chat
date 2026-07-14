@@ -56,7 +56,10 @@ jobs:
       - name: Check for CI fixture PDFs
         id: check_fixtures
         run: |
-          if [ -d "evals/fixtures" ] && [ "$(ls -A evals/fixtures/*.pdf 2>/dev/null)" ]; then
+          if [ -z "$GOOGLE_API_KEY" ]; then
+            echo "fixtures_exist=false" >> $GITHUB_OUTPUT
+            echo "[INFO] GOOGLE_API_KEY is empty or not set — skipping ingestion + eval gate."
+          elif [ -d "evals/fixtures" ] && [ "$(ls -A evals/fixtures/*.pdf 2>/dev/null)" ]; then
             echo "fixtures_exist=true" >> $GITHUB_OUTPUT
           else
             echo "fixtures_exist=false" >> $GITHUB_OUTPUT
