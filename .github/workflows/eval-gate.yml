@@ -70,8 +70,6 @@ jobs:
           import os, sys
           from pathlib import Path
           sys.path.insert(0, str(Path.cwd()))
-          from dotenv import load_dotenv
-          load_dotenv()
           from src.ingestion.pdf_loader import load_pdf_pages_with_stats
           from src.ingestion.chunking import chunk_pdf_pages
           from src.rag.vector_store import build_vector_store_from_chunks, save_vector_store
