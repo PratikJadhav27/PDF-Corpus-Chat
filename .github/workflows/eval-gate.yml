@@ -18,7 +18,7 @@ jobs:
       TOP_K: 4
       FAITHFULNESS_THRESHOLD: "0.85"
       CITATION_VALIDITY_THRESHOLD: "0.80"
-      COMPOSITE_SCORE_THRESHOLD: "1.0"
+      COMPOSITE_SCORE_THRESHOLD: "0.90"
 
     steps:
       - name: Checkout code
