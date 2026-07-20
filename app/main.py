@@ -435,6 +435,10 @@ def user_input(user_question, prompt_type, temperature, collection_name="default
         }
     )
 
+    # Ensure traces are flushed synchronously before Streamlit run context ends
+    from langfuse import Langfuse
+    Langfuse().flush()
+
     return response, docs
 
 
