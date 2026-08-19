@@ -1,7 +1,8 @@
-# PDF Corpus Chat (Multi-PDF RAG)
+# PDF Corpus Chat — Multi-Document RAG System
 
-A production-grade **Multi-PDF Chat Application** built using **Retrieval-Augmented Generation (RAG)**.  
-Upload multiple PDFs, organize them into collections, and chat with **grounded, citation-backed answers** based on your document corpus.
+A **multi-document RAG (Retrieval-Augmented Generation) system** that lets you upload PDFs, organise them into collections, and get **citation-backed answers grounded in your documents**.
+
+Built with a focus on measurable retrieval quality: hybrid BM25 + Qdrant vector search fused via RRF, lexical reranking, structured citation validation, LLM-as-judge evaluation, and a CI regression gate.
 
 ---
 
@@ -24,25 +25,25 @@ Upload multiple PDFs, organize them into collections, and chat with **grounded, 
 
 - 📄 Upload and chat with **multiple PDFs**
 - 🗂️ Create and manage **Collections** (separate knowledge bases per topic/use-case)
-- 💾 Persistent **FAISS vector store** per collection
+- 💾 Persistent **Qdrant vector store** per collection (local embedded, auto-persisted)
 - 🔍 **Hybrid retrieval**: BM25 keyword search + semantic vector search fused via **Reciprocal Rank Fusion (RRF)**
-- 🎯 **Cross-encoder style re-ranking** of retrieved chunks
+- 🎯 **Lexical reranking** — retrieved candidates re-scored by token-overlap combined with RRF score
 - 📌 **Versioned prompt templates** with strict citation enforcement
-- ✅ **Citation validation + guarded fallback** (hallucinated citations are caught and rejected)
-- 🕵️ **Observability tracing** — every request produces a structured JSONL trace with latency, scores, and prompt info
-- 🧪 **Evaluation Mode** (UI + CLI) with LLM-as-judge metrics
-- 🔁 **CI regression gate** to prevent metric degradation on PRs
+- ✅ **Citation validation + guarded fallback** — citations are verified against retrieved source/page pairs before the answer is returned
+- 🕵️ **Observability tracing** via [Langfuse](https://langfuse.com) — every request produces a structured trace with latency, scores, and prompt info; local JSONL sink available as fallback
+- 🧪 **Evaluation Mode** (UI + CLI) using [DSPy](https://dspy.ai)-powered LLM-as-judge metrics (faithfulness, context relevance, answer completeness)
+- 🔁 **CI regression gate** — GitHub Actions blocks PRs on metric degradation
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-Layer 1 — Ingestion:    PDFs → Parser → Chunker → Embedder → FAISS + BM25 corpus
-Layer 2 — Retrieval:    Query → BM25 + Vector → RRF Fusion → Re-ranker → Top-K
-Layer 3 — Generation:   Top-K chunks → Versioned prompt → LLM → Citation-validated answer
-Layer 4 — Observability: JSONL trace per request (latency, scores, model, prompt version)
-Layer 5 — Evaluation:   Golden dataset CI gate (faithfulness, citation validity thresholds)
+Layer 1 — Ingestion:    PDFs → Parser → Chunker → Embedder → Qdrant + BM25 corpus
+Layer 2 — Retrieval:    Query → BM25 + Vector → RRF Fusion → Lexical Re-ranker → Top-K
+Layer 3 — Generation:   Top-K chunks → Versioned prompt → Gemini LLM → Citation-validated answer
+Layer 4 — Observability: Langfuse trace per request (latency, scores, model, prompt version)
+Layer 5 — Evaluation:   DSPy LLM-as-judge CI gate (faithfulness, citation validity thresholds)
 ```
 
 ---
@@ -53,9 +54,11 @@ Layer 5 — Evaluation:   Golden dataset CI gate (faithfulness, citation validit
 |-------|-----------|
 | UI | Streamlit |
 | LLM + Embeddings | Google Gemini (gemini-2.5-flash, embedding-001) |
-| Vector Store | FAISS |
-| BM25 | Custom lightweight implementation (no extra deps) |
-| Tracing | Local JSONL sink (Langfuse/LangSmith ready) |
+| Vector Store | [Qdrant](https://qdrant.tech) (local embedded, persistent) |
+| Keyword Search | Custom BM25 implementation (no extra deps) |
+| LLM Orchestration | [DSPy](https://dspy.ai) (LLM-as-judge evaluation signatures) |
+| Observability | [Langfuse](https://langfuse.com) + local JSONL fallback |
+| Containers | Docker + Docker Compose |
 | CI | GitHub Actions |
 | Testing | pytest |
 
@@ -64,9 +67,9 @@ Layer 5 — Evaluation:   Golden dataset CI gate (faithfulness, citation validit
 ## 📁 Project Structure
 
 ```text
-Multi-PDFs_ChatApp_AI-Agent/
+PDF-Corpus-Chat/
 ├── app/
-│   └── main.py                    # ← Canonical runtime entry point
+│   └── main.py                    # Streamlit entry point
 ├── src/
 │   ├── config.py                  # Chunking, retrieval, observability config
 │   ├── ingestion/
@@ -74,23 +77,24 @@ Multi-PDFs_ChatApp_AI-Agent/
 │   │   └── chunking.py
 │   ├── rag/
 │   │   ├── bm25_index.py          # Lightweight BM25 implementation
+│   │   ├── embeddings.py          # Gemini embedding factory
 │   │   ├── fusion.py              # Reciprocal Rank Fusion (RRF)
-│   │   ├── reranker.py            # Lexical overlap reranker
+│   │   ├── reranker.py            # Token-overlap reranker (blended with RRF)
 │   │   ├── retriever.py           # Hybrid + standard retrieval
-│   │   ├── vector_store.py        # FAISS persistence helpers
+│   │   ├── vector_store.py        # Qdrant persistence helpers
 │   │   ├── prompt_registry.py     # Versioned prompt templates
 │   │   ├── prompting.py           # Context + prompt builder
 │   │   └── validators.py          # Citation validation + guard fallback
 │   ├── eval/
 │   │   ├── evaluator.py           # Heuristic + LLM-judge evaluation
-│   │   └── metrics.py             # Faithfulness, relevance, completeness
+│   │   └── metrics.py             # DSPy signatures: faithfulness, relevance, completeness
 │   ├── observability/
 │   │   ├── tracing.py             # Structured trace record builder
 │   │   └── store.py               # JSONL append sink
 │   └── utils/
 ├── evals/
 │   ├── golden_dataset.jsonl       # Golden Q&A pairs for CI evaluation
-│   ├── fixtures/                  # (optional) small PDFs for CI ingestion
+│   ├── fixtures/                  # Small PDFs for CI ingestion
 │   └── reports/                   # Auto-generated eval reports
 ├── scripts/
 │   ├── run_eval.py                # CLI batch evaluation runner
@@ -99,12 +103,13 @@ Multi-PDFs_ChatApp_AI-Agent/
 ├── tests/
 │   ├── test_fusion.py
 │   ├── test_validators.py
-│   └── test_retriever.py
+│   ├── test_retriever.py
+│   └── test_smoke.py
 ├── .github/workflows/
 │   └── eval-gate.yml              # CI regression gate
-├── conftest.py                    # pytest path setup
+├── conftest.py
 ├── requirements.txt
-└── chatapp.py                     # ⚠️ DEPRECATED — legacy readonly
+└── docker-compose.yml
 ```
 
 ---
@@ -173,7 +178,7 @@ pytest tests/ -v
 
 ### Run Batch CLI Evaluation
 
-The CLI runner evaluates the **golden dataset** against a live collection using LLM-as-judge metrics:
+The CLI runner evaluates the **golden dataset** against a live collection using DSPy LLM-as-judge metrics:
 
 ```bash
 python scripts/run_eval.py \
@@ -207,8 +212,7 @@ python scripts/run_eval.py \
   "summary": {
     "avg_faithfulness": 0.92,
     "avg_citation_validity_ratio": 0.95,
-    "avg_composite_score": 0.89,
-    ...
+    "avg_composite_score": 0.89
   },
   "results": [...]
 }
@@ -218,7 +222,7 @@ python scripts/run_eval.py \
 
 Add records to `evals/golden_dataset.jsonl` in JSONL format:
 ```json
-{"question": "What is X?", "expected_answer": "X is ...", "expected_sources": ["doc.pdf"], "tags": ["comprehension"]}
+{"question": "What is X?", "expected_answer": "X is ...", "expected_sources": ["doc.pdf"], "tags": ["fact_lookup"]}
 ```
 
 ---
@@ -227,7 +231,7 @@ Add records to `evals/golden_dataset.jsonl` in JSONL format:
 
 The GitHub Actions workflow (`.github/workflows/eval-gate.yml`) runs on every PR:
 
-1. **Unit tests** — `tests/test_fusion.py`, `tests/test_validators.py`, `tests/test_retriever.py`
+1. **Unit tests** — `tests/test_fusion.py`, `tests/test_validators.py`, `tests/test_retriever.py`, `tests/test_smoke.py`
 2. **Eval gate** — if `evals/fixtures/*.pdf` exists, ingests and evaluates against `evals/golden_dataset.jsonl`
 3. **Artifacts** — eval report uploaded to GitHub for post-merge debugging
 
@@ -236,9 +240,9 @@ The GitHub Actions workflow (`.github/workflows/eval-gate.yml`) runs on every PR
 - `avg_faithfulness < 0.85`
 - `avg_citation_validity_ratio < 0.90`
 
-To add your own fixture PDFs for CI:
+To add fixture PDFs for CI:
 ```
-evals/fixtures/sample_doc.pdf   # small representative PDF
+evals/fixtures/sample_doc.pdf   # small representative PDF (< 5MB)
 ```
 
 Set `GOOGLE_API_KEY` in your GitHub repository secrets.
@@ -250,7 +254,10 @@ Set `GOOGLE_API_KEY` in your GitHub repository secrets.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GOOGLE_API_KEY` | ✅ | Google Gemini API key |
-| `OBSERVABILITY_ENABLED` | optional | `true` to enable JSONL tracing |
+| `LANGFUSE_PUBLIC_KEY` | optional | Langfuse project public key |
+| `LANGFUSE_SECRET_KEY` | optional | Langfuse project secret key |
+| `LANGFUSE_HOST` | optional | Langfuse host (default: cloud.langfuse.com) |
+| `OBSERVABILITY_ENABLED` | optional | `true` to enable JSONL tracing fallback |
 | `OBSERVABILITY_TRACES_PATH` | optional | Override default trace path |
 | `EVAL_JUDGE_MODEL` | optional | Override LLM judge model (default: gemini-2.5-flash) |
 | `EVAL_LLM_MODEL` | optional | Override inference model for eval CLI |
