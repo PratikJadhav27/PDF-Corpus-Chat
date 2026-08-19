@@ -45,7 +45,7 @@ jobs:
       # -----------------------------------------------------------------
       - name: Run unit tests
         run: |
-          pytest tests/test_fusion.py tests/test_validators.py tests/test_retriever.py \
+          pytest tests/test_fusion.py tests/test_validators.py tests/test_retriever.py tests/test_smoke.py \
             -v --tb=short
 
       # -----------------------------------------------------------------
@@ -75,7 +75,7 @@ jobs:
           sys.path.insert(0, str(Path.cwd()))
           from src.ingestion.pdf_loader import load_pdf_pages_with_stats
           from src.ingestion.chunking import chunk_pdf_pages
-          from src.rag.vector_store import build_vector_store_from_chunks, save_vector_store
+          from src.rag.vector_store import build_vector_store_from_chunks
           from src.rag.bm25_index import save_chunk_corpus
 
           COLLECTION = os.environ["COLLECTION"]
@@ -92,8 +92,7 @@ jobs:
                   pages, stats = load_pdf_pages_with_stats(pdf_obj)
               all_pages.extend(pages)
           chunks = chunk_pdf_pages(all_pages)
-          vs = build_vector_store_from_chunks(chunks, COLLECTION)
-          save_vector_store(vs, COLLECTION)
+          build_vector_store_from_chunks(chunks, COLLECTION)
           save_chunk_corpus(COLLECTION, chunks)
           print(f"Ingested {len(chunks)} chunks into '{COLLECTION}'.")
           EOF
