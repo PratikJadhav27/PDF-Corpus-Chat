@@ -11,7 +11,6 @@ from datetime import datetime
 import shutil
 
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader  # kept for a couple old utility funcs (we'll remove later)
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
@@ -22,10 +21,9 @@ from src.ingestion.pdf_loader import load_pdf_pages_with_stats
 from src.ingestion.chunking import chunk_pdf_pages
 from src.rag.vector_store import (
     build_vector_store_from_chunks,
-    save_vector_store,
     load_vector_store,
-    get_embeddings,
 )
+from src.rag.embeddings import get_embeddings
 
 from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
 from src.rag.prompting import build_context_with_citations, build_grounded_prompt
@@ -494,7 +492,6 @@ def process_and_index_pdfs(pdf_docs, collection_name: str):
         }
 
     vector_store = build_vector_store_from_chunks(chunks, safe_collection)
-    save_vector_store(vector_store, safe_collection)
     save_chunk_corpus(safe_collection, chunks)
 
     overall_success_rate = (
