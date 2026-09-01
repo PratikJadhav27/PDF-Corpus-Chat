@@ -1,34 +1,90 @@
-# Evaluation Dataset
+# Evaluation Fixtures & Golden Dataset
 
-## Golden Dataset Template
+## Overview
 
-The file `golden_dataset.jsonl.template` is a **generic template** with universal questions that work with any PDF corpus. It contains 5 domain-agnostic questions covering:
+| File | Description |
+|------|-------------|
+| `golden_dataset.jsonl` | **50 verified Q&A pairs** used for CI and local evaluation |
+| `golden_dataset.jsonl.template` | Legacy placeholder template (do not use for evaluation) |
+| `fixtures/` | PDF fixture files (fetched at setup time, **not committed** to avoid copyright) |
+| `reports/` | Auto-generated evaluation report JSON files |
 
-- General comprehension ("What is the main purpose...")
-- Summarization ("Summarize the key points...")
-- Findings extraction ("What are the main conclusions...")
-- Audience identification ("Who is the intended audience...")
-- Methodology ("What methodology is described...")
+---
 
-## Usage
+## Fixture PDFs
 
-To create your own evaluation dataset:
+PDFs are **not committed to the repository**. Fetch them at setup/CI time:
 
-1. Copy the template:
-   ```bash
-   cp evals/golden_dataset.jsonl.template evals/my_dataset.jsonl
-   ```
+```bash
+python scripts/download_fixtures.py
+```
 
-2. Replace with domain-specific questions and expected answers:
-   ```json
-   {"question": "What is the Q3 revenue?", "expected_answer": "$5.2M", "expected_sources": ["report.pdf"], "tags": ["finance"]}
-   ```
+Idempotent — skips files that already exist at the expected size.
 
-3. Run evaluation:
-   ```bash
-   python scripts/run_eval.py --dataset evals/my_dataset.jsonl --collection my_collection
-   ```
+| File | Paper | Source |
+|------|-------|--------|
+| `attention_is_all_you_need.pdf` | Vaswani et al. 2017 — Attention Is All You Need | [arXiv:1706.03762](https://arxiv.org/abs/1706.03762) |
+| `bert_pretraining.pdf` | Devlin et al. 2018 — BERT: Pre-training of Deep Bidirectional Transformers | [arXiv:1810.04805](https://arxiv.org/abs/1810.04805) |
+
+Both are open-access and freely available on arXiv.
+
+---
+
+## Golden Dataset Schema
+
+```json
+{
+  "id": "attn_fact_001",
+  "question": "What is the title of the paper?",
+  "expected_answer": "Attention Is All You Need",
+  "expected_sources": ["attention_is_all_you_need.pdf"],
+  "category": "fact_lookup",
+  "difficulty": "easy"
+}
+```
+
+### Categories (50 questions total)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| `fact_lookup` | 15 | Single-document, single-fact retrieval |
+| `numeric` | 12 | Exact numbers, parameter counts, scores |
+| `multi_hop` | 7 | Requires combining info from multiple chunks |
+| `negative` | 5 | Answer is explicitly "No" or a correction of a false premise |
+| `cross_document` | 5 | Evidence required from both fixture PDFs |
+| `follow_up` | 6 | Deeper reasoning building on earlier topics |
+
+---
+
+## CI Integration
+
+The `eval-gate.yml` workflow:
+
+1. Downloads fixture PDFs via `scripts/download_fixtures.py`
+2. Ingests them into a temporary Qdrant collection
+3. Runs `scripts/run_eval.py` against `evals/golden_dataset.jsonl`
+4. Fails the PR if `avg_faithfulness < 0.85` or `avg_citation_validity_ratio < 0.80`
+
+---
+
+## Validating the Dataset
+
+```bash
+python -c "
+import json, sys
+with open('evals/golden_dataset.jsonl') as f:
+    for i, line in enumerate(f, 1):
+        line = line.strip()
+        if not line: continue
+        try:
+            r = json.loads(line)
+            assert 'id' in r and 'question' in r and 'expected_answer' in r
+        except Exception as e:
+            print(f'Line {i}: {e}'); sys.exit(1)
+print('All lines valid.')
+"
+```
 
 ## Report Output
 
-Evaluation reports are written to `evals/reports/` (JSON format). These are gitignored - reports are generated artifacts, not source code.
+Evaluation reports are written to `evals/reports/` (JSON format). Reports are generated artifacts and are gitignored.
