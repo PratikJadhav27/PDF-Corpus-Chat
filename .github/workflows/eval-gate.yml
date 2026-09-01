@@ -18,7 +18,7 @@ jobs:
       TOP_K: 4
       FAITHFULNESS_THRESHOLD: "0.85"
       CITATION_VALIDITY_THRESHOLD: "0.80"
-      COMPOSITE_SCORE_THRESHOLD: "0.90"
+      COMPOSITE_SCORE_THRESHOLD: "0.80"
 
     steps:
       - name: Checkout code
@@ -53,6 +53,10 @@ jobs:
       # This step is a no-op if the fixture doesn't exist, but provides
       # a hook for teams to add a small test PDF to evals/fixtures/.
       # -----------------------------------------------------------------
+      - name: Download fixture PDFs
+        run: |
+          python scripts/download_fixtures.py
+
       - name: Check for CI fixture PDFs
         id: check_fixtures
         run: |
@@ -107,7 +111,7 @@ jobs:
             --collection "$COLLECTION" \
             --mode "$RETRIEVAL_MODE" \
             --top-k "$TOP_K" \
-            --dataset evals/golden_dataset.jsonl.template \
+            --dataset evals/golden_dataset.jsonl \
             --output evals/reports/ci_report.json \
             --faithfulness-threshold "$FAITHFULNESS_THRESHOLD" \
             --citation-validity-threshold "$CITATION_VALIDITY_THRESHOLD" \

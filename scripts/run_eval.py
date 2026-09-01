@@ -39,7 +39,8 @@ load_dotenv()
 
 # Late imports after path fix
 from langchain_google_genai import ChatGoogleGenerativeAI
-from src.rag.vector_store import load_vector_store, get_embeddings
+from src.rag.vector_store import load_vector_store
+from src.rag.embeddings import get_embeddings
 from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
 from src.rag.prompting import build_context_with_citations, build_grounded_prompt
 from src.rag.validators import guard_answer_with_citation_check, citation_validity
