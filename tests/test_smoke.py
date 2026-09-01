@@ -54,25 +54,92 @@ class TestBM25Smoke:
 # ---------------------------------------------------------------------------
 
 class TestBM25Persistence:
-    def test_save_and_load_chunk_corpus(self, tmp_path, monkeypatch):
-        """save_chunk_corpus writes JSONL; load_chunk_corpus reads it back."""
+    def test_save_chunk_corpus_writes_jsonl_and_pickle(self, tmp_path, monkeypatch):
+        """save_chunk_corpus writes JSONL corpus AND a pickled BM25 index."""
         from src.rag import bm25_index
+        import os
 
-        # Redirect vector_stores/ to a temp directory
         monkeypatch.chdir(tmp_path)
 
-        collection = "smoke_test_collection"
+        collection = "smoke_test"
         chunks = [
-            {"text": "Revenue grew 18% in Q4.", "metadata": {"source": "report.pdf", "page": 1}},
-            {"text": "Operating costs declined.", "metadata": {"source": "report.pdf", "page": 2}},
+            {"text": "Revenue grew 18% in Q4.", "metadata": {"source": "report.pdf", "page_number": 1}},
+            {"text": "Operating costs declined.", "metadata": {"source": "report.pdf", "page_number": 2}},
         ]
 
         bm25_index.save_chunk_corpus(collection, chunks)
 
-        loaded = bm25_index.load_chunk_corpus(collection)
-        assert len(loaded) == 2
-        assert loaded[0]["text"] == chunks[0]["text"]
-        assert loaded[1]["metadata"]["page"] == 2
+        # JSONL corpus must exist
+        assert os.path.exists(bm25_index.get_chunk_corpus_path(collection))
+        # Pickle index must exist alongside corpus
+        assert os.path.exists(bm25_index._get_index_path(collection))
+
+    def test_load_bm25_index_returns_index_from_pickle(self, tmp_path, monkeypatch):
+        """After save_chunk_corpus, load_bm25_index reads the pickle."""
+        from src.rag import bm25_index
+
+        monkeypatch.chdir(tmp_path)
+        # Clear in-memory cache so we test actual disk load
+        bm25_index._INDEX_CACHE.clear()
+
+        collection = "cache_test"
+        chunks = [{"text": f"Document {i}", "metadata": {}} for i in range(5)]
+        bm25_index.save_chunk_corpus(collection, chunks)
+
+        index = bm25_index.load_bm25_index(collection)
+        assert index is not None
+        assert index.n_docs == 5
+
+    def test_second_load_hits_memory_cache_not_disk(self, tmp_path, monkeypatch):
+        """Second call to load_bm25_index returns the cached instance (same object id)."""
+        from src.rag import bm25_index
+
+        monkeypatch.chdir(tmp_path)
+        bm25_index._INDEX_CACHE.clear()
+
+        collection = "cache_id_test"
+        chunks = [{"text": "Hello world", "metadata": {}}]
+        bm25_index.save_chunk_corpus(collection, chunks)
+
+        first = bm25_index.load_bm25_index(collection)
+        second = bm25_index.load_bm25_index(collection)
+        assert first is second, "Second load should return the cached instance"
+
+    def test_save_invalidates_cache(self, tmp_path, monkeypatch):
+        """Re-ingesting a collection clears the in-memory cache."""
+        from src.rag import bm25_index
+
+        monkeypatch.chdir(tmp_path)
+        bm25_index._INDEX_CACHE.clear()
+
+        collection = "invalidate_test"
+        bm25_index.save_chunk_corpus(collection, [{"text": "old doc", "metadata": {}}])
+        old = bm25_index.load_bm25_index(collection)  # populates cache
+
+        # Re-ingest with new data
+        bm25_index.save_chunk_corpus(collection, [{"text": "new doc", "metadata": {}}])
+        # Cache should have been cleared; next load reads fresh pickle
+        assert collection not in bm25_index._INDEX_CACHE
+
+    def test_bm25_search_collection_end_to_end(self, tmp_path, monkeypatch):
+        """bm25_search_collection returns ranked results without rebuilding index."""
+        from src.rag import bm25_index
+
+        monkeypatch.chdir(tmp_path)
+        bm25_index._INDEX_CACHE.clear()
+
+        collection = "e2e_test"
+        chunks = [
+            {"text": "Revenue grew 18% in fiscal Q4.", "metadata": {"source": "r.pdf", "page_number": 1}},
+            {"text": "Weather in London is cloudy.",   "metadata": {"source": "r.pdf", "page_number": 2}},
+        ]
+        bm25_index.save_chunk_corpus(collection, chunks)
+
+        results = bm25_index.bm25_search_collection(collection, "revenue fiscal", k=5)
+        assert len(results) >= 1
+        top_text, top_score = results[0]
+        assert "Revenue" in top_text["text"]
+        assert top_score > 0
 
     def test_load_nonexistent_corpus_returns_empty(self, tmp_path, monkeypatch):
         from src.rag import bm25_index
@@ -80,6 +147,14 @@ class TestBM25Persistence:
         monkeypatch.chdir(tmp_path)
         result = bm25_index.load_chunk_corpus("does_not_exist")
         assert result == []
+
+    def test_search_nonexistent_collection_returns_empty(self, tmp_path, monkeypatch):
+        from src.rag import bm25_index
+
+        monkeypatch.chdir(tmp_path)
+        bm25_index._INDEX_CACHE.clear()
+        results = bm25_index.bm25_search_collection("ghost_collection", "query", k=5)
+        assert results == []
 
 
 # ---------------------------------------------------------------------------
