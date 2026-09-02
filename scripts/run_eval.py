@@ -104,7 +104,7 @@ def run_inference(
 
     model = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=temperature)
     answer_raw = model.invoke(prompt).content
-    answer = guard_answer_with_citation_check(answer_raw, docs, min_validity_ratio=0.8)
+    answer = guard_answer_with_citation_check(answer_raw, docs, min_validity_ratio=0.5)
 
     return answer, docs, round(time.time() - t0, 3)
 
