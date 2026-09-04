@@ -49,7 +49,7 @@ def render_history_tab():
                         if dbg:
                             st.caption(
                                 f"rrf={dbg.get('rrf_score')} | rerank={dbg.get('rerank_score')} | "
-                                f"vector={dbg.get('vector_score')} | bm25={dbg.get('bm25_score')}"
+                                f"ce={dbg.get('ce_score')} | vector={dbg.get('vector_score')} | bm25={dbg.get('bm25_score')}"
                             )
 
         st.markdown("---")
