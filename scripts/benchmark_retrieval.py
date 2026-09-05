@@ -102,10 +102,11 @@ def run_strategy(
     t0 = time.perf_counter()
 
     if strategy == "bm25":
+        # bm25_search_collection returns List[Tuple[Dict, float]]
         hits = bm25_search_collection(collection_name, question, k=top_k)
         retrieved = [
-            os.path.basename(h.get("metadata", {}).get("source", "")).lower()
-            for h in hits
+            os.path.basename(doc.get("metadata", {}).get("source", "")).lower()
+            for doc, _score in hits
         ]
     elif strategy == "hybrid":
         docs = retrieve_hybrid_reranked(
