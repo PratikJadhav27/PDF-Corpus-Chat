@@ -40,10 +40,10 @@ Built with a focus on measurable retrieval quality: hybrid BM25 + Qdrant vector 
 
 ```
 Layer 1 — Ingestion:    PDFs → Parser → Chunker → Embedder → Qdrant + BM25 corpus
-Layer 2 — Retrieval:    Query → BM25 + Vector → RRF Fusion → Lexical Re-ranker → Top-K
+Layer 2 — Retrieval:    Query → BM25 + Vector → RRF Fusion → CrossEncoder Reranker → Top-K
 Layer 3 — Generation:   Top-K chunks → Versioned prompt → Gemini LLM → Citation-validated answer
 Layer 4 — Observability: Langfuse trace per request (latency, scores, model, prompt version)
-Layer 5 — Evaluation:   DSPy LLM-as-judge CI gate (faithfulness, citation validity thresholds)
+Layer 5 — Evaluation:   Deterministic Recall@5 gate + DSPy LLM-as-judge CI gate
 ```
 
 ---
@@ -76,10 +76,10 @@ PDF-Corpus-Chat/
 │   │   ├── pdf_loader.py
 │   │   └── chunking.py
 │   ├── rag/
-│   │   ├── bm25_index.py          # Lightweight BM25 implementation
+│   │   ├── bm25_index.py          # Lightweight BM25 — persisted to disk, in-memory cache
 │   │   ├── embeddings.py          # Gemini embedding factory
 │   │   ├── fusion.py              # Reciprocal Rank Fusion (RRF)
-│   │   ├── reranker.py            # Token-overlap reranker (blended with RRF)
+│   │   ├── reranker.py            # ms-marco-MiniLM-L-6-v2 CrossEncoder (singleton)
 │   │   ├── retriever.py           # Hybrid + standard retrieval
 │   │   ├── vector_store.py        # Qdrant persistence helpers
 │   │   ├── prompt_registry.py     # Versioned prompt templates
@@ -87,7 +87,8 @@ PDF-Corpus-Chat/
 │   │   └── validators.py          # Citation validation + guard fallback
 │   ├── eval/
 │   │   ├── evaluator.py           # Heuristic + LLM-judge evaluation
-│   │   └── metrics.py             # DSPy signatures: faithfulness, relevance, completeness
+│   │   ├── metrics.py             # DSPy signatures: faithfulness, relevance, completeness
+│   │   └── retrieval_metrics.py   # Recall@K, Precision@K, MRR, nDCG@K, P50/P95
 │   ├── observability/
 │   │   ├── tracing.py             # Structured trace record builder
 │   │   └── store.py               # JSONL append sink
@@ -98,13 +99,22 @@ PDF-Corpus-Chat/
 │   └── reports/                   # Auto-generated eval reports
 ├── scripts/
 │   ├── run_eval.py                # CLI batch evaluation runner
+│   ├── benchmark_retrieval.py     # Retrieval strategy benchmark (Recall@K, MRR, nDCG)
+│   ├── download_fixtures.py       # Downloads arXiv PDFs for CI fixture collection
 │   ├── setup.ps1
 │   └── run.ps1
 ├── tests/
 │   ├── test_fusion.py
 │   ├── test_validators.py
 │   ├── test_retriever.py
-│   └── test_smoke.py
+│   ├── test_smoke.py
+│   ├── test_reranker.py
+│   └── test_retrieval_metrics.py
+├── evals/
+│   ├── golden_dataset.jsonl       # 50 verified Q&A pairs (6 categories)
+│   ├── baselines/latest.json      # Latest retrieval benchmark results
+│   ├── fixtures/                  # PDF fixtures for CI ingestion
+│   └── reports/                   # Auto-generated eval reports
 ├── .github/workflows/
 │   └── eval-gate.yml              # CI regression gate
 ├── conftest.py
@@ -225,6 +235,32 @@ Add records to `evals/golden_dataset.jsonl` in JSONL format:
 {"question": "What is X?", "expected_answer": "X is ...", "expected_sources": ["doc.pdf"], "tags": ["fact_lookup"]}
 ```
 
+### Run Retrieval Benchmark
+
+Compare four strategies (similarity / mmr / bm25 / hybrid) on Recall@5, MRR, nDCG@5, and latency:
+
+```bash
+python scripts/benchmark_retrieval.py \
+  --collection my_collection \
+  --dataset evals/golden_dataset.jsonl \
+  --output evals/baselines/latest.json \
+  --top-k 5
+```
+
+Sample output (values from CI run on arXiv fixture PDFs):
+
+| Strategy       | Recall@5 | Precision@5 | MRR    | nDCG@5  | P50 (s) | P95 (s) |
+|----------------|----------|-------------|--------|---------|---------|---------|
+| similarity     | —        | —           | —      | —       | —       | —       |
+| mmr            | —        | —           | —      | —       | —       | —       |
+| bm25           | —        | —           | —      | —       | —       | —       |
+| hybrid         | —        | —           | —      | —       | —       | —       |
+
+> Numbers will be filled in on the first CI run with fixture PDFs. The baseline is saved to
+> `evals/baselines/latest.json` and tracked in version control.
+
+**CI gate:** Recall@5 of the best strategy must be ≥ 0.50 or the workflow fails.
+
 ---
 
 ## 🔁 CI Regression Gate
@@ -238,7 +274,8 @@ The GitHub Actions workflow (`.github/workflows/eval-gate.yml`) runs on every PR
 **PR is blocked if:**
 - Any unit test fails
 - `avg_faithfulness < 0.85`
-- `avg_citation_validity_ratio < 0.90`
+- `avg_citation_validity_ratio < 0.65`
+- Best `Recall@5 < 0.50` (deterministic, no LLM needed)
 
 To add fixture PDFs for CI:
 ```

@@ -50,7 +50,7 @@ jobs:
       - name: Run unit tests
         run: |
           pytest tests/test_fusion.py tests/test_validators.py tests/test_retriever.py \
-            tests/test_smoke.py tests/test_reranker.py \
+            tests/test_smoke.py tests/test_reranker.py tests/test_retrieval_metrics.py \
             -v --tb=short
 
       # -----------------------------------------------------------------
@@ -121,6 +121,19 @@ jobs:
             --faithfulness-threshold "$FAITHFULNESS_THRESHOLD" \
             --citation-validity-threshold "$CITATION_VALIDITY_THRESHOLD" \
             --composite-score-threshold "$COMPOSITE_SCORE_THRESHOLD"
+
+      # -----------------------------------------------------------------
+      # Retrieval benchmark — Recall@5 deterministic gate (no LLM needed)
+      # -----------------------------------------------------------------
+      - name: Run Retrieval Benchmark
+        if: steps.check_fixtures.outputs.fixtures_exist == 'true'
+        run: |
+          python scripts/benchmark_retrieval.py \
+            --collection "$COLLECTION" \
+            --dataset evals/golden_dataset.jsonl \
+            --output evals/baselines/latest.json \
+            --top-k 5 \
+            --recall-gate 0.50
 
       # -----------------------------------------------------------------
       # Upload report as artifact for debugging
