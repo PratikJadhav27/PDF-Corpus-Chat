@@ -211,6 +211,16 @@ def parse_args() -> argparse.Namespace:
         default=0.85,
         help="Minimum acceptable avg composite score.",
     )
+    p.add_argument(
+        "--entailment",
+        action="store_true",
+        default=False,
+        help=(
+            "Run citation entailment evaluation (DSPy-powered semantic check "
+            "that each inline citation is supported by the cited chunk). "
+            "Adds avg_entailment_rate to the report. Requires GOOGLE_API_KEY."
+        ),
+    )
     return p.parse_args()
 
 
@@ -280,6 +290,18 @@ def main() -> int:
         row["latency_sec"] = latency
         row["expected_answer"] = record.get("expected_answer", "")
         row["expected_sources"] = record.get("expected_sources", [])
+
+        # Citation entailment (optional, LLM-judge, eval-only)
+        if args.entailment and answer and docs:
+            try:
+                from src.eval.entailment import evaluate_citation_entailment
+                entailment_result = evaluate_citation_entailment(answer=answer, docs=docs)
+            except Exception as exc:
+                entailment_result = {"entailment_rate": 0.0, "error": str(exc)}
+            row["entailment"] = entailment_result
+        else:
+            row["entailment"] = None
+
         results.append(row)
 
     # --- Build report ---
@@ -307,6 +329,15 @@ def main() -> int:
         print(f"  Avg Context Relevance : {summary.get('avg_context_relevance')}")
         print(f"  Avg Completeness      : {summary.get('avg_answer_completeness')}")
         print(f"  Avg Composite Score   : {summary.get('avg_composite_score')}")
+    if args.entailment:
+        entailment_scores = [
+            r["entailment"]["entailment_rate"]
+            for r in results
+            if r.get("entailment") and "entailment_rate" in r["entailment"]
+        ]
+        avg_entailment = round(sum(entailment_scores) / len(entailment_scores), 4) if entailment_scores else 0.0
+        report["summary"]["avg_entailment_rate"] = avg_entailment
+        print(f"  Avg Entailment Rate   : {avg_entailment}")
     print("=" * 60)
 
     # --- Write report to disk ---
