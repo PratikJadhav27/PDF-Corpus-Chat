@@ -13,6 +13,10 @@ jobs:
 
     env:
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      # Langfuse is optional — when these secrets are absent the guard
+      # silently activates no-op stubs and no auth errors are logged.
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       COLLECTION: ci_collection
       RETRIEVAL_MODE: hybrid
       TOP_K: 4
@@ -51,6 +55,7 @@ jobs:
         run: |
           pytest tests/test_fusion.py tests/test_validators.py tests/test_retriever.py \
             tests/test_smoke.py tests/test_reranker.py tests/test_retrieval_metrics.py \
+            tests/test_langfuse_guard.py \
             -v --tb=short
 
       # -----------------------------------------------------------------
