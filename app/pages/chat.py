@@ -9,8 +9,7 @@ from datetime import datetime
 
 import streamlit as st
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langfuse import Langfuse, observe
-from langfuse.langchain import CallbackHandler
+from src.observability.langfuse_guard import observe, CallbackHandler, langfuse_flush
 
 from src.config import CHUNKING
 from src.rag.embeddings import get_embeddings
@@ -148,7 +147,7 @@ def run_rag_query(user_question: str, prompt_type: str, temperature: float, coll
         "citation_validity_ratio": citation_stats.get("validity_ratio", 0.0),
     })
 
-    Langfuse().flush()
+    langfuse_flush()
     return response, docs
 
 
