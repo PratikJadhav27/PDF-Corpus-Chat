@@ -7,7 +7,18 @@ from qdrant_client import QdrantClient
 from src.rag.embeddings import get_embeddings  # centralised embedding factory
 
 
-QDRANT_PATH = "vector_stores/qdrant_db"
+# Base directory for vector stores. Each collection gets its own sub‑directory.
+def get_collection_dir(collection_name: str) -> str:
+    """Return the absolute path for a collection's Qdrant storage.
+
+    The function sanitises the collection name (spaces → underscores) and
+    ensures a directory exists under ``vector_stores``.
+    """
+    safe = (collection_name or "default").strip().replace(" ", "_")
+    return f"vector_stores/{safe}"
+
+# Legacy constant kept for backward compatibility – points to the default collection.
+QDRANT_PATH = get_collection_dir("default")
 
 
 def sanitize_collection_name(name: str) -> str:
@@ -18,11 +29,12 @@ def sanitize_collection_name(name: str) -> str:
 
 def load_vector_store(collection_name: str, embeddings) -> Optional[QdrantVectorStore]:
     safe_name = sanitize_collection_name(collection_name)
+    collection_dir = get_collection_dir(collection_name)
 
-    if not os.path.exists(QDRANT_PATH):
+    if not os.path.exists(collection_dir):
         return None
 
-    client = QdrantClient(path=QDRANT_PATH)
+    client = QdrantClient(path=collection_dir)
 
     try:
         collections = client.get_collections().collections
@@ -41,16 +53,17 @@ def load_vector_store(collection_name: str, embeddings) -> Optional[QdrantVector
 def build_vector_store_from_chunks(chunks: List[Dict[str, Any]], collection_name: str = "default") -> QdrantVectorStore:
     embeddings = get_embeddings()
     safe_name = sanitize_collection_name(collection_name)
+    collection_dir = get_collection_dir(collection_name)
 
     texts = [c["text"] for c in chunks]
     metadatas = [c["metadata"] for c in chunks]
 
-    os.makedirs(QDRANT_PATH, exist_ok=True)
+    os.makedirs(collection_dir, exist_ok=True)
 
     return QdrantVectorStore.from_texts(
         texts=texts,
         embedding=embeddings,
         metadatas=metadatas,
-        path=QDRANT_PATH,
+        path=collection_dir,
         collection_name=safe_name,
     )

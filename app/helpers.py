@@ -57,8 +57,13 @@ def load_collection_metadata(collection_name: str) -> Optional[Dict[str, Any]]:
 
 
 def estimate_cost(tokens_used: int) -> float:
-    """Rough Gemini cost estimate (USD) based on token count."""
-    cost_per_million = 0.15
+    """Estimate cost in USD for a given token count.
+
+    The per‑million‑token rate is read from the ``COST_PER_MILLION``
+    environment variable (default 0.15 USD) to allow easy tuning per
+    model/provider.
+    """
+    cost_per_million = float(os.getenv("COST_PER_MILLION", "0.15"))
     return (tokens_used / 1_000_000) * cost_per_million
 
 

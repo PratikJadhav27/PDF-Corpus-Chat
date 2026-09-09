@@ -1,0 +1,222 @@
+"""RAG inference helper functions.
+
+This module contains the core retrieval‑generation‑validation pipeline that was
+previously embedded in ``app/pages/chat.py``.  Keeping the logic here makes it
+easier to unit‑test, reuse in other front‑ends (FastAPI, CLI), and keeps the
+Streamlit page focused on UI rendering.
+"""
+
+import time
+from datetime import datetime
+from typing import List, Tuple, Optional
+
+import streamlit as st
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+from src.rag.embeddings import get_embeddings
+from src.rag.vector_store import load_vector_store
+from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
+from src.rag.prompting import build_context_with_citations, build_grounded_prompt
+from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
+from src.rag.validators import guard_answer_with_citation_check, citation_validity
+from src.observability.langfuse_guard import observe, CallbackHandler, langfuse_flush
+from src.observability.tracing import (
+    append_rag_trace,
+    build_trace_record,
+    new_trace_id,
+)
+
+# LLM model name is read from environment (default matches previous hard‑coded value).
+import os
+
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gemini-2.5-flash")
+
+
+@observe()
+def run_rag_query(
+    user_question: str,
+    prompt_type: str,
+    temperature: float,
+    collection_name: str,
+) -> Tuple[Optional[str], Optional[List]]:
+    """Full RAG pipeline.
+
+    Returns ``(answer, docs)`` where ``docs`` is a list of ``Document`` objects.
+    ``None`` values indicate a fatal error (e.g., missing vector store).
+    """
+    trace_id = new_trace_id()
+    t0 = time.time()
+
+    embeddings = get_embeddings()
+    db = load_vector_store(collection_name, embeddings)
+
+    if db is None:
+        append_rag_trace(
+            build_trace_record(
+                trace_id=trace_id,
+                phase="chat",
+                collection=collection_name,
+                query=user_question,
+                retrieval_mode=st.session_state.retrieval_mode,
+                prompt_version=st.session_state.prompt_version,
+                model_name=LLM_MODEL_NAME,
+                temperature=temperature,
+                top_k=st.session_state.top_k,
+                candidate_k=(
+                    st.session_state.candidate_k
+                    if st.session_state.retrieval_mode == "hybrid"
+                    else None
+                ),
+                rerank_top_n=(
+                    st.session_state.rerank_top_n
+                    if st.session_state.retrieval_mode == "hybrid"
+                    else None
+                ),
+                docs=[],
+                latency_sec={"total_sec": round(time.time() - t0, 4)},
+                error="vector_store_missing",
+                prompt_style=prompt_type,
+            )
+        )
+        st.error(
+            f"Please upload and process PDF files first in collection '{collection_name}'!"
+        )
+        return None, None
+
+    # --- Retrieval ---
+    t_r0 = time.time()
+    if st.session_state.retrieval_mode == "hybrid":
+        docs = retrieve_hybrid_reranked(
+            db=db,
+            collection_name=collection_name,
+            query=user_question,
+            top_k=st.session_state.rerank_top_n,
+            candidate_k=st.session_state.candidate_k,
+        )
+    else:
+        docs = retrieve_docs(
+            db,
+            user_question,
+            mode=st.session_state.retrieval_mode,
+            k=st.session_state.top_k,
+        )
+    retrieval_sec = round(time.time() - t_r0, 4)
+
+    if not docs:
+        response = "I don't know based on the provided documents."
+        append_rag_trace(
+            build_trace_record(
+                trace_id=trace_id,
+                phase="chat",
+                collection=collection_name,
+                query=user_question,
+                retrieval_mode=st.session_state.retrieval_mode,
+                prompt_version=st.session_state.prompt_version,
+                model_name=LLM_MODEL_NAME,
+                temperature=temperature,
+                top_k=st.session_state.top_k,
+                candidate_k=(
+                    st.session_state.candidate_k
+                    if st.session_state.retrieval_mode == "hybrid"
+                    else None
+                ),
+                rerank_top_n=(
+                    st.session_state.rerank_top_n
+                    if st.session_state.retrieval_mode == "hybrid"
+                    else None
+                ),
+                docs=[],
+                latency_sec={
+                    "retrieval_sec": retrieval_sec,
+                    "total_sec": round(time.time() - t0, 4),
+                },
+                answer_preview=response[:500],
+                prompt_style=prompt_type,
+            )
+        )
+        return response, []
+
+    # --- Generation ---
+    context = build_context_with_citations(docs)
+    prompt = build_grounded_prompt(
+        context=context, question=user_question, version=st.session_state.prompt_version
+    )
+    model = ChatGoogleGenerativeAI(model=LLM_MODEL_NAME, temperature=temperature)
+
+    t_l0 = time.time()
+    try:
+        langfuse_handler = CallbackHandler()
+        response = model.invoke(prompt, config={"callbacks": [langfuse_handler]}).content
+    except Exception as e:
+        append_rag_trace(
+            build_trace_record(
+                trace_id=trace_id,
+                phase="chat",
+                collection=collection_name,
+                query=user_question,
+                retrieval_mode=st.session_state.retrieval_mode,
+                prompt_version=st.session_state.prompt_version,
+                model_name=LLM_MODEL_NAME,
+                temperature=temperature,
+                top_k=st.session_state.top_k,
+                candidate_k=(
+                    st.session_state.candidate_k
+                    if st.session_state.retrieval_mode == "hybrid"
+                    else None
+                ),
+                rerank_top_n=(
+                    st.session_state.rerank_top_n
+                    if st.session_state.retrieval_mode == "hybrid"
+                    else None
+                ),
+                docs=docs,
+                latency_sec={
+                    "retrieval_sec": retrieval_sec,
+                    "llm_sec": round(time.time() - t_l0, 4),
+                    "total_sec": round(time.time() - t0, 4),
+                },
+                error=str(e),
+                prompt_style=prompt_type,
+            )
+        )
+        st.error(f"Model error: {e}")
+        return None, None
+    llm_sec = round(time.time() - t_l0, 4)
+
+    response = guard_answer_with_citation_check(response, docs, min_validity_ratio=0.8)
+    citation_stats = citation_validity(response, docs)
+
+    append_rag_trace(
+        build_trace_record(
+            trace_id=trace_id,
+            phase="chat",
+            collection=collection_name,
+            query=user_question,
+            retrieval_mode=st.session_state.retrieval_mode,
+            prompt_version=st.session_state.prompt_version,
+            model_name=LLM_MODEL_NAME,
+            temperature=temperature,
+            top_k=st.session_state.top_k,
+            candidate_k=(
+                st.session_state.candidate_k
+                if st.session_state.retrieval_mode == "hybrid"
+                else None
+            ),
+            rerank_top_n=(
+                st.session_state.rerank_top_n
+                if st.session_state.retrieval_mode == "hybrid"
+                else None
+            ),
+            docs=docs,
+            latency_sec={
+                "retrieval_sec": retrieval_sec,
+                "llm_sec": llm_sec,
+                "total_sec": round(time.time() - t0, 4),
+            },
+            citation_validity_ratio=citation_stats.get("validity_ratio", 0.0),
+            answer_preview=(response or "")[:500],
+            prompt_style=prompt_type,
+        )
+    )
+
+    return response, docs

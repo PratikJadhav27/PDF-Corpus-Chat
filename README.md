@@ -297,7 +297,8 @@ Set `GOOGLE_API_KEY` in your GitHub repository secrets.
 | `OBSERVABILITY_ENABLED` | optional | `true` to enable JSONL tracing fallback |
 | `OBSERVABILITY_TRACES_PATH` | optional | Override default trace path |
 | `EVAL_JUDGE_MODEL` | optional | Override LLM judge model (default: gemini-2.5-flash) |
-| `EVAL_LLM_MODEL` | optional | Override inference model for eval CLI |
+| `LLM_MODEL_NAME` | optional | LLM model to use for generation (default: gemini-2.5-flash) |
+| `COST_PER_MILLION` | optional | Approximate USD cost per million tokens (default: 0.15) |
 
 > ⚠️ **Never commit `.env`** — it is in `.gitignore`.
 
