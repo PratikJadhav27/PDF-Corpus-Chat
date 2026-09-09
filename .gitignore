@@ -33,3 +33,6 @@ evals/reports/*.json
 
 # Legacy / deprecated files (kept locally for reference only)
 chatapp.py
+
+# Local analysis / scratchpad docs — not for the repo
+project_analysis/
