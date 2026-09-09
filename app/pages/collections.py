@@ -1,8 +1,8 @@
 """
 app/pages/collections.py
 
-Tab 2 — Document Stats
-Tab 6 — Collections & Cost Management
+Tab 4 — Collections & Cost Management.
+Merged from old Tabs 2 (Doc Stats) + 6 (Collections & Cost).
 """
 import streamlit as st
 from app.helpers import (
@@ -13,67 +13,115 @@ from app.helpers import (
 )
 
 
-def render_stats_tab(collections):
-    st.subheader("📊 Document Analytics")
+def render_collections_tab(collections):
+    st.markdown(
+        """
+        <div style="margin-bottom:1.25rem;">
+            <div style="font-family:var(--font-display);font-size:1.1rem;font-weight:600;
+                        color:var(--text-1);">Collections & Documents</div>
+            <div style="font-size:0.78rem;color:var(--text-3);margin-top:2px;">
+                Collection stats · cost tracking · index management
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    selected = st.selectbox("Select Collection to View Stats", collections, key="stats_collection")
+    # ── Cost & usage overview ─────────────────────────────────────────────
+    tokens = st.session_state.get("token_count", 0)
+    cost   = estimate_cost(tokens)
+
+    st.markdown('<div class="dm-section-header">💰 Usage & Cost</div>', unsafe_allow_html=True)
+    cu1, cu2, cu3 = st.columns(3)
+    cu1.metric("Total Tokens", f"{tokens:,}")
+    cu2.metric("Est. Cost (USD)", f"${cost:.6f}")
+    cu3.metric("Conversations", len(st.session_state.get("chat_history", [])))
+
+    st.markdown("---")
+
+    # ── Collection browser ────────────────────────────────────────────────
+    st.markdown('<div class="dm-section-header">📦 Vector Store Collections</div>', unsafe_allow_html=True)
+
+    if not collections:
+        st.markdown(
+            """
+            <div class="dm-metric-card" style="text-align:center;padding:2.5rem;">
+                <div style="font-size:2rem;opacity:0.3;">📦</div>
+                <div style="color:var(--text-3);font-size:0.82rem;margin-top:0.5rem;">
+                    No collections yet. Upload PDFs in the sidebar to get started.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    selected = st.selectbox("Inspect Collection", collections, key="stats_collection")
     metadata = load_collection_metadata(selected)
 
     if metadata:
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("📄 Total Files", len(metadata.get("files", [])))
-        with c2: st.metric("📃 Total Pages", metadata.get("total_pages", 0))
-        with c3: st.metric("🔗 Total Chunks", metadata.get("total_chunks", 0))
-        with c4: st.metric("📏 Chunk Size", f"{metadata.get('chunk_size', 0)} / {metadata.get('chunk_overlap', 0)}")
-
-        st.write("---")
-        st.subheader("Uploaded Files")
-        for file_info in metadata.get("files", []):
-            st.write(f"• **{file_info}**")
-
-        st.write("---")
-        st.write(f"*Last processed: {metadata.get('processed_at', 'N/A')}*")
-
+        # Top metrics
         overall = metadata.get("extraction_stats", {}).get("overall", {})
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Files", len(metadata.get("files", [])))
+        c2.metric("Pages",  metadata.get("total_pages", 0))
+        c3.metric("Chunks", metadata.get("total_chunks", 0))
+        c4.metric(
+            "Extraction Rate",
+            f"{overall.get('success_rate_percent', 100)}%",
+        )
+
+        # File list
+        st.markdown('<div class="dm-section-header" style="margin-top:1rem;">📄 Files</div>', unsafe_allow_html=True)
+        for file_info in metadata.get("files", []):
+            st.markdown(
+                f'<div class="dm-metric-card" style="padding:0.65rem 1rem;margin-bottom:6px;">'
+                f'<span style="font-size:0.82rem;">📄 {file_info}</span></div>',
+                unsafe_allow_html=True,
+            )
+
+        # Extraction quality
         if overall:
-            st.write("---")
-            st.subheader("📊 Extraction Quality")
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: st.metric("✅ Extracted Pages", overall.get("extracted_pages", 0))
-            with c2: st.metric("📄 Total Pages", overall.get("total_pages", 0))
-            with c3: st.metric("⚠️ Empty Pages", overall.get("empty_pages", 0))
-            with c4: st.metric("💥 Failed Pages", overall.get("failed_pages", 0))
-            st.write(f"**Success Rate:** {overall.get('success_rate_percent', 0)}%")
+            st.markdown('<div class="dm-section-header" style="margin-top:1rem;">🔍 Extraction Quality</div>', unsafe_allow_html=True)
+            eq1, eq2, eq3 = st.columns(3)
+            eq1.metric("Extracted", overall.get("extracted_pages", 0))
+            eq2.metric("Empty",     overall.get("empty_pages", 0))
+            eq3.metric("Failed",    overall.get("failed_pages", 0))
 
-            with st.expander("Per-file extraction breakdown"):
+            with st.expander("Per-file breakdown"):
                 for f in metadata.get("extraction_stats", {}).get("per_file", []):
-                    st.write(
-                        f"• **{f.get('file_name')}** → "
-                        f"{f.get('extracted_pages')}/{f.get('total_pages')} extracted "
-                        f"({f.get('extraction_success_rate')}%) | "
-                        f"Empty: {f.get('empty_pages')} | Failed: {f.get('failed_pages')}"
+                    st.markdown(
+                        f'<div class="dm-metric-card" style="padding:0.65rem 1rem;margin-bottom:6px;">'
+                        f'<span style="font-size:0.78rem;font-weight:600;">{f.get("file_name")}</span>'
+                        f'<span style="font-size:0.72rem;color:var(--text-3);margin-left:8px;">'
+                        f'{f.get("extracted_pages")}/{f.get("total_pages")} pages · '
+                        f'{f.get("extraction_success_rate")}% success</span></div>',
+                        unsafe_allow_html=True,
                     )
+
+        st.caption(f"Last processed: {metadata.get('processed_at', 'N/A')}")
+
     else:
-        st.info(f"📌 No documents in '{selected}' collection yet.")
+        st.markdown(
+            f'<div class="dm-metric-card" style="text-align:center;padding:2rem;">'
+            f'<div style="color:var(--text-3);">No documents in <strong>{selected}</strong> yet.</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Danger zone ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="dm-section-header">⚠️ Manage Collections</div>', unsafe_allow_html=True)
+    with st.expander("Delete a Collection"):
+        col_to_delete = st.selectbox("Select collection to delete", collections, key="del_collection")
+        st.warning(f"This will permanently delete **{col_to_delete}** and all its indexed data.")
+        if st.button(f"🗑️ Delete '{col_to_delete}'", type="primary"):
+            delete_collection(col_to_delete)
+            st.success(f"Deleted '{col_to_delete}'")
+            st.rerun()
 
 
-def render_collections_tab(collections):
-    st.subheader("⚙️ Collections & Cost Management")
-
-    st.write("### 📦 Vector Store Collections")
-    with st.expander("View All Collections"):
-        for collection in collections:
-            col_a, col_b = st.columns([3, 1])
-            with col_a:
-                st.write(f"📁 **{collection}**")
-            with col_b:
-                if st.button("🗑️ Delete", key=f"delete_{collection}"):
-                    delete_collection(collection)
-                    st.success(f"Deleted '{collection}'")
-                    st.rerun()
-
-    st.write("### 💰 Cost & Token Tracking")
-    c1, c2, c3 = st.columns(3)
-    with c1: st.metric("🔤 Total Tokens Used", st.session_state.token_count)
-    with c2: st.metric("💵 Estimated Cost", f"${estimate_cost(st.session_state.token_count):.6f}")
-    with c3: st.metric("📝 Total Conversations", len(st.session_state.chat_history))
+# Keep the old name for backward compat with any external callers
+def render_stats_tab(collections):
+    """Alias — merged into render_collections_tab."""
+    render_collections_tab(collections)

@@ -15,11 +15,13 @@ def init_session_state() -> None:
         "current_collection": "default",
         "token_count": 0,
         "feedback_data": [],
-        "retrieval_mode": "similarity",
+        "eval_results": [],
+        "retrieval_mode": "hybrid",
         "top_k": 4,
         "candidate_k": 12,
         "rerank_top_n": 4,
         "prompt_version": DEFAULT_PROMPT_VERSION,
+        "prompt_type": "standard",
     }
     for key, default in defaults.items():
         if key not in st.session_state:

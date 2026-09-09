@@ -46,7 +46,7 @@ def test_run_rag_query_no_docs(monkeypatch):
     # Now import and run the function under test
     from src.rag.inference import run_rag_query
 
-    answer, docs = run_rag_query(
+    answer, docs, latency = run_rag_query(
         user_question="What is the revenue?",
         prompt_type="standard",
         temperature=0.0,
@@ -55,3 +55,5 @@ def test_run_rag_query_no_docs(monkeypatch):
 
     assert answer == "I don't know based on the provided documents."
     assert docs == []
+    assert isinstance(latency, dict)
+    assert "total_sec" in latency

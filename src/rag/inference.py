@@ -8,7 +8,7 @@ Streamlit page focused on UI rendering.
 
 import time
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 import streamlit as st
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -38,12 +38,15 @@ def run_rag_query(
     prompt_type: str,
     temperature: float,
     collection_name: str,
-) -> Tuple[Optional[str], Optional[List]]:
+) -> Tuple[Optional[str], Optional[List], Dict[str, float]]:
     """Full RAG pipeline.
 
-    Returns ``(answer, docs)`` where ``docs`` is a list of ``Document`` objects.
-    ``None`` values indicate a fatal error (e.g., missing vector store).
+    Returns ``(answer, docs, latency)`` where:
+    - ``answer``  is the generated string (or None on fatal error)
+    - ``docs``    is the list of retrieved Document objects (or None on fatal error)
+    - ``latency`` is a dict with keys total_sec, retrieval_sec, llm_sec
     """
+    _NO_LATENCY = {"total_sec": 0.0, "retrieval_sec": 0.0, "llm_sec": 0.0}
     trace_id = new_trace_id()
     t0 = time.time()
 
@@ -81,7 +84,7 @@ def run_rag_query(
         st.error(
             f"Please upload and process PDF files first in collection '{collection_name}'!"
         )
-        return None, None
+        return None, None, _NO_LATENCY
 
     # --- Retrieval ---
     t_r0 = time.time()
@@ -134,7 +137,7 @@ def run_rag_query(
                 prompt_style=prompt_type,
             )
         )
-        return response, []
+        return response, [], {"total_sec": round(time.time() - t0, 4), "retrieval_sec": retrieval_sec, "llm_sec": 0.0}
 
     # --- Generation ---
     context = build_context_with_citations(docs)
@@ -180,7 +183,7 @@ def run_rag_query(
             )
         )
         st.error(f"Model error: {e}")
-        return None, None
+        return None, None, _NO_LATENCY
     llm_sec = round(time.time() - t_l0, 4)
 
     response = guard_answer_with_citation_check(response, docs, min_validity_ratio=0.8)
@@ -218,5 +221,6 @@ def run_rag_query(
             prompt_style=prompt_type,
         )
     )
-
-    return response, docs
+    langfuse_flush()
+    latency = {"total_sec": round(time.time() - t0, 4), "retrieval_sec": retrieval_sec, "llm_sec": llm_sec}
+    return response, docs, latency
