@@ -1,5 +1,5 @@
 """
-app/pages/chat.py
+app/views/chat.py
 
 Tab 1 — Interactive Chat (conversation thread + source cards).
 Also owns the sidebar (PDF upload, collection management, advanced settings).

@@ -6,7 +6,7 @@ Responsibility:
   - Inject the CSS design system from app/styles.py
   - Initialise session state
   - Assemble the 4-tab layout
-  - Delegate all rendering to app/pages/*
+  - Delegate all rendering to app/views/*
 
 Run with:
     streamlit run app/main.py
@@ -23,10 +23,10 @@ from dotenv import load_dotenv
 from app.state import init_session_state
 from app.helpers import get_collections
 from app.styles import get_css
-from app.pages.chat import render_chat_tab, render_sidebar
-from app.pages.collections import render_collections_tab
-from app.pages.history import render_history_tab
-from app.pages.evaluation import render_evaluation_tab
+from app.views.chat import render_chat_tab, render_sidebar
+from app.views.collections import render_collections_tab
+from app.views.history import render_history_tab
+from app.views.evaluation import render_evaluation_tab
 
 load_dotenv()
 

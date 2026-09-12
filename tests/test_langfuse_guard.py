@@ -150,5 +150,5 @@ class TestImportSurface:
 
     def test_chat_page_has_no_direct_langfuse_import(self):
         assert not self._file_contains_direct_import(
-            "app/pages/chat.py"
+            "app/views/chat.py"
         )
