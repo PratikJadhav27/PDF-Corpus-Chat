@@ -129,7 +129,7 @@ def render_history_tab():
 
     # ── Semantic Search ──────────────────────────────────────────────────
     with inner_tab_search:
-        st.markdown('<div class="dm-section-header">🔍 Semantic Document Search</div>', unsafe_allow_html=True)
+        st.markdown('<div class="dm-section">🔍 Semantic Document Search</div>', unsafe_allow_html=True)
 
         collections = list(set(
             c.get("collection", "default") for c in st.session_state.get("chat_history", [])

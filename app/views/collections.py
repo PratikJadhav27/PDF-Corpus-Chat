@@ -1,127 +1,186 @@
 """
-app/pages/collections.py
+app/views/collections.py
 
-Tab 4 — Collections & Cost Management.
-Merged from old Tabs 2 (Doc Stats) + 6 (Collections & Cost).
+Tab 4 — Collections, Upload & Cost Management.
+
+This tab is the primary place for:
+  - Uploading new PDF documents (not sidebar-dependent)
+  - Creating / switching collections
+  - Viewing indexed document stats
+  - Cost tracking
+  - Deleting collections
+
+The sidebar also shows upload shortcuts for power users.
 """
+import os
 import streamlit as st
 from app.helpers import (
     get_collections,
     delete_collection,
     load_collection_metadata,
     estimate_cost,
+    process_and_index_pdfs,
 )
+from src.config import CHUNKING
 
 
 def render_collections_tab(collections):
     st.markdown(
         """
-        <div style="margin-bottom:1.25rem;">
-            <div style="font-family:var(--font-display);font-size:1.1rem;font-weight:600;
-                        color:var(--text-1);">Collections & Documents</div>
-            <div style="font-size:0.78rem;color:var(--text-3);margin-top:2px;">
-                Collection stats · cost tracking · index management
-            </div>
+        <div class="dm-page-header">
+            <h2>Collections &amp; Documents</h2>
+            <p>Upload PDFs · create collections · view index stats · track cost</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ── Cost & usage overview ─────────────────────────────────────────────
-    tokens = st.session_state.get("token_count", 0)
-    cost   = estimate_cost(tokens)
+    # ── UPLOAD SECTION (primary — no sidebar needed) ──────────────────────
+    st.markdown('<div class="dm-section">📤 Upload &amp; Index PDFs</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="dm-section-header">💰 Usage & Cost</div>', unsafe_allow_html=True)
+    up_col, settings_col = st.columns([5, 3])
+
+    with up_col:
+        pdf_docs = st.file_uploader(
+            "Drop PDF files here",
+            accept_multiple_files=True,
+            type="pdf",
+            key="main_uploader",
+            label_visibility="collapsed",
+        )
+
+    with settings_col:
+        # Collection target selector
+        all_cols = get_collections() or ["default"]
+        target_col = st.selectbox(
+            "Target Collection",
+            all_cols,
+            index=all_cols.index(st.session_state.get("current_collection", "default"))
+            if st.session_state.get("current_collection", "default") in all_cols else 0,
+            key="upload_target_col",
+        )
+        st.session_state.current_collection = target_col
+        st.caption(f"Chunk {CHUNKING.chunk_size} · Overlap {CHUNKING.chunk_overlap}")
+        new_col_name = st.text_input(
+            "Or create new collection",
+            placeholder="e.g. research-q4",
+            key="new_col_name_main",
+        )
+        if new_col_name.strip():
+            if st.button("＋ Create", key="create_col_main"):
+                safe = new_col_name.strip().replace(" ", "_")
+                os.makedirs(f"vector_stores/{safe}", exist_ok=True)
+                os.makedirs(f"metadata/{safe}", exist_ok=True)
+                st.session_state.current_collection = safe
+                st.success(f"Created '{safe}'")
+                st.rerun()
+
+    if st.button("🚀 Submit & Process", type="primary", use_container_width=True, key="main_process_btn"):
+        if not pdf_docs:
+            st.warning("Please upload at least one PDF file first.")
+        else:
+            with st.status(f"Indexing {len(pdf_docs)} PDF(s) into '{target_col}'…", expanded=True) as s:
+                st.write("📄 Extracting text & chunking…")
+                result = process_and_index_pdfs(pdf_docs, target_col)
+                st.write("🔗 Building vector index & BM25…")
+                if result["ok"]:
+                    s.update(label=f"✅ Indexed {len(pdf_docs)} PDF(s) successfully", state="complete")
+                    stats = result.get("stats", {}).get("overall", {})
+                    rc1, rc2, rc3 = st.columns(3)
+                    rc1.metric("Pages", stats.get("total_pages", 0))
+                    rc2.metric("Extracted", stats.get("extracted_pages", 0))
+                    rc3.metric("Failed", stats.get("failed_pages", 0))
+                    st.session_state.current_collection = target_col
+                    st.rerun()
+                else:
+                    s.update(label="❌ Indexing failed", state="error")
+                    st.error(result.get("message", "Unknown error"))
+
+    st.markdown("---")
+
+    # ── USAGE & COST ──────────────────────────────────────────────────────
+    st.markdown('<div class="dm-section">💰 Usage &amp; Cost</div>', unsafe_allow_html=True)
+    tokens = st.session_state.get("token_count", 0)
     cu1, cu2, cu3 = st.columns(3)
     cu1.metric("Total Tokens", f"{tokens:,}")
-    cu2.metric("Est. Cost (USD)", f"${cost:.6f}")
+    cu2.metric("Est. Cost (USD)", f"${estimate_cost(tokens):.6f}")
     cu3.metric("Conversations", len(st.session_state.get("chat_history", [])))
 
     st.markdown("---")
 
-    # ── Collection browser ────────────────────────────────────────────────
-    st.markdown('<div class="dm-section-header">📦 Vector Store Collections</div>', unsafe_allow_html=True)
+    # ── COLLECTION BROWSER ────────────────────────────────────────────────
+    st.markdown('<div class="dm-section">📦 Collection Browser</div>', unsafe_allow_html=True)
 
-    if not collections:
-        st.markdown(
-            """
-            <div class="dm-metric-card" style="text-align:center;padding:2.5rem;">
-                <div style="font-size:2rem;opacity:0.3;">📦</div>
-                <div style="color:var(--text-3);font-size:0.82rem;margin-top:0.5rem;">
-                    No collections yet. Upload PDFs in the sidebar to get started.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    refreshed = get_collections() or []
+    if not refreshed:
+        st.info("No collections yet. Upload PDFs above to get started.")
         return
 
-    selected = st.selectbox("Inspect Collection", collections, key="stats_collection")
+    selected = st.selectbox("Inspect Collection", refreshed, key="stats_collection")
     metadata = load_collection_metadata(selected)
 
     if metadata:
-        # Top metrics
         overall = metadata.get("extraction_stats", {}).get("overall", {})
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Files", len(metadata.get("files", [])))
-        c2.metric("Pages",  metadata.get("total_pages", 0))
-        c3.metric("Chunks", metadata.get("total_chunks", 0))
-        c4.metric(
-            "Extraction Rate",
-            f"{overall.get('success_rate_percent', 100)}%",
-        )
+        c1.metric("Files",          len(metadata.get("files", [])))
+        c2.metric("Pages",          metadata.get("total_pages", 0))
+        c3.metric("Chunks",         metadata.get("total_chunks", 0))
+        c4.metric("Extraction",     f"{overall.get('success_rate_percent', 100)}%")
 
-        # File list
-        st.markdown('<div class="dm-section-header" style="margin-top:1rem;">📄 Files</div>', unsafe_allow_html=True)
-        for file_info in metadata.get("files", []):
-            st.markdown(
-                f'<div class="dm-metric-card" style="padding:0.65rem 1rem;margin-bottom:6px;">'
-                f'<span style="font-size:0.82rem;">📄 {file_info}</span></div>',
-                unsafe_allow_html=True,
-            )
+        # Indexed file list
+        files = metadata.get("files", [])
+        if files:
+            st.markdown('<div class="dm-section" style="margin-top:1rem;">📄 Indexed Files</div>', unsafe_allow_html=True)
+            for fname in files:
+                st.markdown(
+                    f'<div style="background:var(--bg-surface);border:1px solid var(--border);'
+                    f'border-radius:8px;padding:8px 14px;margin-bottom:5px;font-size:0.82rem;">'
+                    f'📄 {fname}</div>',
+                    unsafe_allow_html=True,
+                )
 
         # Extraction quality
         if overall:
-            st.markdown('<div class="dm-section-header" style="margin-top:1rem;">🔍 Extraction Quality</div>', unsafe_allow_html=True)
+            st.markdown('<div class="dm-section" style="margin-top:1rem;">🔍 Extraction Quality</div>', unsafe_allow_html=True)
             eq1, eq2, eq3 = st.columns(3)
-            eq1.metric("Extracted", overall.get("extracted_pages", 0))
-            eq2.metric("Empty",     overall.get("empty_pages", 0))
-            eq3.metric("Failed",    overall.get("failed_pages", 0))
+            eq1.metric("Extracted",  overall.get("extracted_pages", 0))
+            eq2.metric("Empty",      overall.get("empty_pages", 0))
+            eq3.metric("Failed",     overall.get("failed_pages", 0))
 
             with st.expander("Per-file breakdown"):
                 for f in metadata.get("extraction_stats", {}).get("per_file", []):
+                    fname = f.get("file_name", "?")
+                    ext   = f.get("extracted_pages", 0)
+                    tot   = f.get("total_pages", 0)
+                    rate  = f.get("extraction_success_rate", 0)
                     st.markdown(
-                        f'<div class="dm-metric-card" style="padding:0.65rem 1rem;margin-bottom:6px;">'
-                        f'<span style="font-size:0.78rem;font-weight:600;">{f.get("file_name")}</span>'
-                        f'<span style="font-size:0.72rem;color:var(--text-3);margin-left:8px;">'
-                        f'{f.get("extracted_pages")}/{f.get("total_pages")} pages · '
-                        f'{f.get("extraction_success_rate")}% success</span></div>',
+                        f'<div style="background:var(--bg-surface);border:1px solid var(--border);'
+                        f'border-radius:8px;padding:8px 14px;margin-bottom:5px;font-size:0.78rem;">'
+                        f'<strong>{fname}</strong>'
+                        f'<span style="color:var(--text-3);margin-left:8px;">'
+                        f'{ext}/{tot} pages · {rate}% success</span></div>',
                         unsafe_allow_html=True,
                     )
 
         st.caption(f"Last processed: {metadata.get('processed_at', 'N/A')}")
 
     else:
-        st.markdown(
-            f'<div class="dm-metric-card" style="text-align:center;padding:2rem;">'
-            f'<div style="color:var(--text-3);">No documents in <strong>{selected}</strong> yet.</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+        st.info(f"No documents indexed in '{selected}' yet. Upload PDFs above.")
 
-    # ── Danger zone ───────────────────────────────────────────────────────
+    # ── DANGER ZONE ───────────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown('<div class="dm-section-header">⚠️ Manage Collections</div>', unsafe_allow_html=True)
+    st.markdown('<div class="dm-section">⚠️ Manage Collections</div>', unsafe_allow_html=True)
     with st.expander("Delete a Collection"):
-        col_to_delete = st.selectbox("Select collection to delete", collections, key="del_collection")
+        col_to_delete = st.selectbox(
+            "Select collection to delete", refreshed, key="del_collection"
+        )
         st.warning(f"This will permanently delete **{col_to_delete}** and all its indexed data.")
-        if st.button(f"🗑️ Delete '{col_to_delete}'", type="primary"):
+        if st.button(f"🗑️ Delete '{col_to_delete}'", type="primary", key="delete_col_btn"):
             delete_collection(col_to_delete)
             st.success(f"Deleted '{col_to_delete}'")
             st.rerun()
 
 
-# Keep the old name for backward compat with any external callers
 def render_stats_tab(collections):
-    """Alias — merged into render_collections_tab."""
+    """Alias kept for backward compatibility."""
     render_collections_tab(collections)
