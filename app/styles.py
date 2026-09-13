@@ -123,9 +123,11 @@ footer { visibility: hidden !important; }
 }
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] label,
-[data-testid="stSidebar"] span:not([data-baseweb]) {
+[data-testid="stSidebar"] .sidebar-label {
     font-family: var(--font-body) !important;
 }
+/* IMPORTANT: do NOT set font-family on sidebar spans — they include icon glyphs
+   that rely on Material Symbols font (keyboard_double_arrow_right, etc.) */
 
 /* Sidebar collapse button — keep it but fix background so it's not jarring */
 [data-testid="collapsedControl"] {
@@ -319,7 +321,26 @@ footer { visibility: hidden !important; }
 [data-testid="stExpander"] summary {
     font-weight: 500 !important;
     color: var(--text-2) !important;
-    font-family: var(--font-body) !important;
+    /* NOTE: do NOT set font-family here — the icon glyph (arrow_drop_down) lives
+       inside a span within summary and uses Material Symbols Rounded font.
+       Overriding font-family breaks it and shows raw text. */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MATERIAL SYMBOLS ICON PROTECTION
+   Belt-and-suspenders: explicitly restore Material Symbols font for all
+   Streamlit icon glyphs, regardless of what parent rules may have set.
+   This prevents 'keyboard_double_arrow_right', 'arrow_drop_down' etc.
+   from showing as raw text.
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-testid="collapsedControl"] span,
+[data-testid="stExpander"] summary span,
+[data-testid="baseButton-header"] span,
+[data-testid="stSidebar"] button span,
+button[kind="header"] span {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+    font-feature-settings: 'liga' !important;
+    -webkit-font-smoothing: antialiased !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
