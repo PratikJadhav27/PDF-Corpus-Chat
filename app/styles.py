@@ -73,18 +73,38 @@ def get_css() -> str:
     font-family: var(--font-body);
 }
 
-/* Block container padding */
-.stApp .block-container {
-    padding-top: 1.5rem !important;
-    padding-bottom: 5rem !important;
+
+/* Hide deploy button and Streamlit menu — but NOT the header itself (it has the sidebar toggle) */
+#stDecoration { display: none !important; }
+[data-testid="stToolbarActions"] { visibility: hidden !important; }
+[data-testid="stMainMenuButton"] { display: none !important; }
+footer { visibility: hidden !important; }
+#MainMenu { visibility: hidden !important; }
+
+/* Style the top Streamlit header bar to match dark theme */
+[data-testid="stHeader"] {
+    background-color: var(--bg-base) !important;
+    border-bottom: 1px solid var(--border) !important;
 }
 
-/* Hide default Streamlit header & deploy button */
-#stDecoration { display: none !important; }
-[data-testid="stHeader"] { display: none !important; }
-footer.css-1lsmgbg { display: none !important; }
-#MainMenu { visibility: hidden !important; }
-footer { visibility: hidden !important; }
+/* Make the sidebar collapse/expand button clearly visible */
+[data-testid="collapsedControl"] {
+    background-color: var(--bg-surface) !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: 0 var(--radius) var(--radius) 0 !important;
+    color: var(--text-2) !important;
+}
+[data-testid="collapsedControl"]:hover {
+    background-color: var(--bg-elevated) !important;
+    border-color: var(--primary) !important;
+    color: var(--text-1) !important;
+}
+
+/* Block container padding — compensate for visible header */
+.stApp .block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 5rem !important;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CUSTOM SCROLLBAR
@@ -103,9 +123,11 @@ footer { visibility: hidden !important; }
 }
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] label,
-[data-testid="stSidebar"] span:not([data-baseweb]) {
+[data-testid="stSidebar"] .sidebar-label {
     font-family: var(--font-body) !important;
 }
+/* IMPORTANT: do NOT set font-family on sidebar spans — they include icon glyphs
+   that rely on Material Symbols font (keyboard_double_arrow_right, etc.) */
 
 /* Sidebar collapse button — keep it but fix background so it's not jarring */
 [data-testid="collapsedControl"] {
@@ -299,7 +321,26 @@ footer { visibility: hidden !important; }
 [data-testid="stExpander"] summary {
     font-weight: 500 !important;
     color: var(--text-2) !important;
-    font-family: var(--font-body) !important;
+    /* NOTE: do NOT set font-family here — the icon glyph (arrow_drop_down) lives
+       inside a span within summary and uses Material Symbols Rounded font.
+       Overriding font-family breaks it and shows raw text. */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MATERIAL SYMBOLS ICON PROTECTION
+   Belt-and-suspenders: explicitly restore Material Symbols font for all
+   Streamlit icon glyphs, regardless of what parent rules may have set.
+   This prevents 'keyboard_double_arrow_right', 'arrow_drop_down' etc.
+   from showing as raw text.
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-testid="collapsedControl"] span,
+[data-testid="stExpander"] summary span,
+[data-testid="baseButton-header"] span,
+[data-testid="stSidebar"] button span,
+button[kind="header"] span {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+    font-feature-settings: 'liga' !important;
+    -webkit-font-smoothing: antialiased !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
