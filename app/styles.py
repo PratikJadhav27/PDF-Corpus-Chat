@@ -272,6 +272,7 @@ footer { visibility: hidden !important; }
     background: var(--bg-surface) !important;
     border: 1px solid var(--border-light) !important;
     border-radius: var(--radius-full) !important;
+    overflow: hidden !important;      /* clip inner textarea corners to pill shape */
 }
 [data-testid="stChatInput"]:focus-within {
     border-color: var(--primary) !important;
@@ -281,6 +282,8 @@ footer { visibility: hidden !important; }
     background: transparent !important;
     color: var(--text-1) !important;
     font-family: var(--font-body) !important;
+    border-radius: 0 !important;      /* prevent browser-default rounding bleeding out */
+    border: none !important;
 }
 [data-testid="stChatInputSubmitButton"] > button {
     background: var(--primary) !important;
