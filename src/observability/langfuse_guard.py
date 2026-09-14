@@ -93,9 +93,19 @@ if not LANGFUSE_ENABLED:
         return decorator
 
     class CallbackHandler:                                   # type: ignore[no-redef]
-        """Stub that silently absorbs any construction args and does nothing."""
+        """Stub that silently absorbs any construction args and does nothing.
+
+        LangChain's internals probe the handler for various callback methods
+        (e.g. ``raise_error``, ``on_llm_start``, ``on_chain_end`` …).  Without
+        ``__getattr__`` every such access raises an AttributeError at runtime.
+        Returning a no-op lambda keeps the chain completely transparent.
+        """
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
+
+        def __getattr__(self, name: str) -> Any:
+            """Return a silent no-op for every attribute LangChain might probe."""
+            return lambda *args, **kwargs: None
 
     def langfuse_flush() -> None:                           # type: ignore[misc]
         """No-op flush when Langfuse is not configured."""
