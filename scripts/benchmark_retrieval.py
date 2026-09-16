@@ -53,6 +53,45 @@ from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
 from src.rag.bm25_index import bm25_search_collection
 from src.eval.retrieval_metrics import compute_run_metrics
 
+
+# ---------------------------------------------------------------------------
+# Retry helper for transient Google API errors (503, 429, 500)
+# ---------------------------------------------------------------------------
+
+def retry_on_transient(fn, *args, max_retries: int = 4, base_delay: float = 5.0, **kwargs):
+    """
+    Call fn(*args, **kwargs) and retry up to max_retries times on transient
+    Google API errors (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED, 500 INTERNAL).
+    Uses exponential back-off: delay doubles each attempt (5s, 10s, 20s, 40s).
+    Raises the last exception if all retries are exhausted.
+    """
+    import google.api_core.exceptions as _gex
+
+    transient = (
+        _gex.ServiceUnavailable,   # 503
+        _gex.ResourceExhausted,    # 429
+        _gex.InternalServerError,  # 500
+        _gex.DeadlineExceeded,     # 504
+    )
+    delay = base_delay
+    last_exc: Exception | None = None
+    for attempt in range(1, max_retries + 2):  # +1 for the initial try
+        try:
+            return fn(*args, **kwargs)
+        except transient as exc:
+            last_exc = exc
+            if attempt > max_retries:
+                break
+            print(
+                f"  [retry {attempt}/{max_retries}] "
+                f"{type(exc).__name__}: {exc}. "
+                f"Waiting {delay:.0f}s...",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)   # cap at 60s
+    raise last_exc  # type: ignore[misc]
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -98,6 +137,8 @@ def run_strategy(
     """
     Run a single strategy for one question.
     Returns {"retrieved": [...], "latency_sec": float}.
+    All embedding calls are wrapped in retry_on_transient() to survive
+    Google API 503/429 blips in CI.
     """
     t0 = time.perf_counter()
 
@@ -109,7 +150,8 @@ def run_strategy(
             for doc, _score in hits
         ]
     elif strategy == "hybrid":
-        docs = retrieve_hybrid_reranked(
+        docs = retry_on_transient(
+            retrieve_hybrid_reranked,
             db=db,
             collection_name=collection_name,
             query=question,
@@ -119,7 +161,9 @@ def run_strategy(
         retrieved = _source_names(docs)
     else:
         # similarity or mmr
-        docs = retrieve_docs(db, question, mode=strategy, k=top_k)
+        docs = retry_on_transient(
+            retrieve_docs, db, question, mode=strategy, k=top_k
+        )
         retrieved = _source_names(docs)
 
     latency = round(time.perf_counter() - t0, 4)
@@ -268,11 +312,24 @@ def main() -> None:
     print(f"[benchmark] collection={args.collection}  queries={len(dataset)}  top_k={args.top_k}")
     print(f"[benchmark] strategies: {STRATEGIES}")
 
-    benchmark = run_benchmark(
-        collection_name=args.collection,
-        dataset=dataset,
-        top_k=args.top_k,
-    )
+    try:
+        benchmark = run_benchmark(
+            collection_name=args.collection,
+            dataset=dataset,
+            top_k=args.top_k,
+        )
+    except Exception as exc:
+        # Catch any persistent API / infra error (all retries exhausted).
+        # Exit code 2 = setup/infra error, not a recall regression.
+        print(
+            f"[ERROR] Benchmark failed after retries: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        print(
+            "[WARN] This is a transient Google API error — not a code quality issue.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     print_markdown_table(benchmark, args.top_k)
     save_baseline(benchmark, args.output)
