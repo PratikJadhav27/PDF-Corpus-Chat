@@ -711,18 +711,181 @@ hr { border-color: var(--border) !important; }
     font-family: 'Inter', sans-serif;
 }
 
-/* Citation pills (inside chat messages) */
-.dm-citation {
-    display: inline-flex;
-    align-items: center;
-    background: rgba(59,130,246,0.1);
-    border: 1px solid rgba(59,130,246,0.3);
-    border-radius: 5px;
-    padding: 1px 7px;
+/* ═══════════════════════════════════════════════════════════════════════════
+   PERPLEXITY-STYLE CITATION PILLS
+   Numbered superscript badges that show a hover tooltip with source details.
+   Usage: <sup><span class="dm-cite-pill" data-tooltip="...filename · page X">[1]</span></sup>
+   ═══════════════════════════════════════════════════════════════════════════ */
+.dm-cite-pill {
+    display: inline-block;
+    background: rgba(59,130,246,0.12);
+    border: 1px solid rgba(59,130,246,0.35);
+    border-radius: 4px;
+    padding: 0 5px;
+    font-size: 0.62rem;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
+    font-weight: 600;
     color: #93C5FD;
-    margin: 0 3px;
+    cursor: default;
+    position: relative;
+    transition: all 0.15s ease;
+    vertical-align: super;
+    line-height: 1.4;
+    margin: 0 1px;
+    white-space: nowrap;
+    user-select: none;
+}
+.dm-cite-pill:hover {
+    background: rgba(59,130,246,0.25);
+    border-color: #3B82F6;
+    color: #BFDBFE;
+}
+/* Tooltip card shown on hover */
+.dm-cite-pill::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1A2235;
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 9px 13px;
+    font-size: 0.72rem;
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    color: #E2E8F0;
+    width: max-content;
+    max-width: 260px;
+    white-space: normal;
+    line-height: 1.5;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+    z-index: 9999;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    text-align: left;
+}
+/* Arrow pointer */
+.dm-cite-pill::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #374151;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+    z-index: 9999;
+}
+.dm-cite-pill:hover::after,
+.dm-cite-pill:hover::before {
+    opacity: 1;
+}
+
+/* ─── Reference list at the bottom of AI messages ──────────────────────── */
+.dm-refs {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+.dm-refs-title {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 6px;
+    font-family: 'Inter', sans-serif;
+}
+.dm-ref-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 5px;
+    font-size: 0.72rem;
+    font-family: 'Inter', sans-serif;
+    color: var(--text-2);
+    line-height: 1.4;
+}
+.dm-ref-num {
+    display: inline-block;
+    min-width: 18px;
+    height: 18px;
+    background: rgba(59,130,246,0.12);
+    border: 1px solid rgba(59,130,246,0.3);
+    border-radius: 4px;
+    font-size: 0.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: #93C5FD;
+    text-align: center;
+    line-height: 18px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+.dm-ref-text {
+    color: var(--text-2);
+}
+.dm-ref-file {
+    color: #93C5FD;
+    font-weight: 600;
+}
+.dm-ref-page {
+    color: var(--text-3);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+}
+
+/* ─── Source card grid (replaces the broken dm-source-strip) ───────────── */
+.dm-source-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+    padding-top: 4px;
+}
+.dm-source-card-v2 {
+    background: #1A2235;
+    border: 1px solid #1F2937;
+    border-radius: 10px;
+    padding: 11px 13px;
+    font-family: 'Inter', sans-serif;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.dm-source-card-v2:hover {
+    border-color: rgba(59,130,246,0.4);
+    box-shadow: 0 0 12px rgba(59,130,246,0.1);
+}
+.dm-sc2-fname {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #F1F5F9;
+    word-break: break-word;
+    margin-bottom: 3px;
+}
+.dm-sc2-meta {
+    font-size: 0.65rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: #475569;
+    margin-bottom: 6px;
+}
+.dm-sc2-score {
+    font-size: 0.65rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: #10B981;
+    margin-bottom: 6px;
+}
+.dm-sc2-excerpt {
+    font-size: 0.7rem;
+    color: #94A3B8;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 </style>
 """
