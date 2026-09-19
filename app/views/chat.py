@@ -343,12 +343,16 @@ def render_sidebar(collections):
             st.session_state.temperature = temperature
 
             st.markdown('<div class="sidebar-label">Prompt Style</div>', unsafe_allow_html=True)
+            prompt_keys = list(PROMPTS.keys())
+            # Sanitise stored value — may be "standard" (legacy) which no longer exists
+            stored_prompt = st.session_state.get("prompt_type", DEFAULT_PROMPT_VERSION)
+            if stored_prompt not in prompt_keys:
+                stored_prompt = DEFAULT_PROMPT_VERSION
+                st.session_state["prompt_type"] = DEFAULT_PROMPT_VERSION
             prompt_type = st.selectbox(
                 "Prompt Style",
-                list(PROMPTS.keys()),
-                index=list(PROMPTS.keys()).index(
-                    st.session_state.get("prompt_type", DEFAULT_PROMPT_VERSION)
-                ),
+                prompt_keys,
+                index=prompt_keys.index(stored_prompt),
                 key="sidebar_prompt_type",
                 label_visibility="visible",
             )

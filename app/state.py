@@ -21,7 +21,7 @@ def init_session_state() -> None:
         "candidate_k": 12,
         "rerank_top_n": 4,
         "prompt_version": DEFAULT_PROMPT_VERSION,
-        "prompt_type": "standard",
+        "prompt_type": DEFAULT_PROMPT_VERSION,
     }
     for key, default in defaults.items():
         if key not in st.session_state:
