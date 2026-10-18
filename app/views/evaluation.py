@@ -35,6 +35,32 @@ def _load_baseline() -> dict:
     return {}
 
 
+def _fmt_score(value) -> str:
+    """Format an optional 0-1 score; "—" when the metric was not computed."""
+    return "—" if value is None else f"{value:.2f}"
+
+
+def _render_eval_report(report: dict):
+    """Render the persisted report for the most recent in-app batch evaluation."""
+    summary = report.get("summary", {})
+    st.success(f"✅ {summary.get('total_questions', 0)} questions evaluated")
+    rc1, rc2, rc3 = st.columns(3)
+    rc1.metric("Avg Faithfulness", _fmt_score(summary.get("avg_faithfulness")))
+    rc2.metric("Avg Citation Valid.", _fmt_score(summary.get("avg_citation_validity_ratio")))
+    rc3.metric("Citation Rate", f"{summary.get('citation_rate', 0):.0f}%")
+    st.caption(
+        f"Collection: {report.get('collection_name', '—')} · "
+        f"mode: {report.get('retrieval_mode', '—')} · "
+        f"top-k: {report.get('top_k', '—')}"
+    )
+    st.download_button(
+        "⬇️ Export JSON Report",
+        data=to_pretty_json(report),
+        file_name=f"eval_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+        mime="application/json",
+    )
+
+
 def _metric_card(col, label: str, value: str, trend: str, color: str, icon: str, trend_cls: str):
     """Render a single metric card using st.markdown inside a column."""
     with col:
@@ -170,6 +196,12 @@ def render_evaluation_tab(collections):
             eval_mode = st.selectbox("Mode", ["hybrid", "similarity", "mmr"], key="eval_mode")
         with col_b:
             eval_temp = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1, key="eval_temp")
+        include_llm_metrics = st.checkbox(
+            "Include LLM-judge metrics (faithfulness, relevance, completeness)",
+            value=False,
+            key="eval_include_llm_metrics",
+            help="Adds three Gemini judge calls per question — slower and uses API quota.",
+        )
 
         if st.button("🚀 Run Evaluation", type="primary"):
             questions = [q.strip() for q in eval_questions_text.split("\n") if q.strip()]
@@ -189,7 +221,9 @@ def render_evaluation_tab(collections):
                         q, "standard", eval_temp, eval_collection
                     )
                     if answer:
-                        ev = evaluate_one(q, answer, docs or [])
+                        ev = evaluate_one(
+                            q, answer, docs or [], include_llm_metrics=include_llm_metrics
+                        )
                         ev["question"]    = q
                         ev["latency_sec"] = latency.get("total_sec", 0)
                         results.append(ev)
@@ -198,15 +232,17 @@ def render_evaluation_tab(collections):
                 status_txt.empty()
                 if results:
                     st.session_state["eval_results"] = results
-                    report = build_report(results)
-                    st.success(f"✅ {len(results)} questions evaluated")
-                    rc1, rc2 = st.columns(2)
-                    rc1.metric("Avg Faithfulness", f"{report.get('avg_faithfulness', 0):.2f}")
-                    rc2.metric("Avg Citation Valid.", f"{report.get('avg_citation_validity_ratio', 0):.2f}")
-                    st.download_button(
-                        "⬇️ Export JSON Report",
-                        data=to_pretty_json(report),
-                        file_name=f"eval_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                        mime="application/json",
+                    st.session_state["eval_report"] = build_report(
+                        collection_name=eval_collection,
+                        retrieval_mode=eval_mode,
+                        top_k=st.session_state.top_k,
+                        results=results,
                     )
-                    st.rerun()
+                else:
+                    st.session_state.pop("eval_report", None)
+                    st.warning("No answers were produced — check the model configuration.")
+
+        # Report lives in session state so it survives reruns instead of being
+        # wiped by an immediate st.rerun() (which used to hide success + export).
+        if st.session_state.get("eval_report"):
+            _render_eval_report(st.session_state["eval_report"])
