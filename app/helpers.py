@@ -2,7 +2,14 @@
 app/helpers.py
 
 Shared, stateless helpers used across multiple pages.
-No Streamlit calls — pure logic only.
+No Streamlit rendering calls — pure logic only.
+
+Ingestion semantics (ISSUE-001)
+--------------------------------
+Chunks belong to a *source file*. Re-ingesting a PDF replaces that file's
+chunks on BOTH indexes (Qdrant points and the BM25/JSONL corpus); chunks from
+other files are preserved, and metadata.json is merged per file. This keeps
+the two indexes consistent no matter how many upload batches a user performs.
 """
 import json
 import os
@@ -13,8 +20,8 @@ from typing import Any, Dict, List, Optional
 from src.config import CHUNKING
 from src.ingestion.pdf_loader import load_pdf_pages_with_stats
 from src.ingestion.chunking import chunk_pdf_pages
-from src.rag.vector_store import build_vector_store_from_chunks
-from src.rag.bm25_index import save_chunk_corpus
+from src.rag.vector_store import upsert_chunks
+from src.rag.bm25_index import merge_chunk_corpus
 
 import streamlit as st  # only for st.session_state.document_metadata write
 
@@ -68,25 +75,124 @@ def estimate_cost(tokens_used: int) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Metadata merge helpers (per-file identity)
+# ---------------------------------------------------------------------------
+
+def _merge_file_entries(
+    previous: List[Dict[str, Any]],
+    current: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge per-file extraction-stat entries.
+
+    Entries with the same ``file_name`` are replaced by the newer entry while
+    preserving first-seen ordering, so re-uploading a document refreshes its
+    stats without losing other files' rows.
+    """
+    by_name: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for entry in list(previous or []) + list(current or []):
+        name = entry.get("file_name") or entry.get("name")
+        if not name:
+            continue
+        if name not in by_name:
+            order.append(name)
+        by_name[name] = entry
+    return [by_name[n] for n in order]
+
+
+def _merge_totals(per_file: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Recompute overall extraction totals from merged per-file entries."""
+    total = sum(f.get("total_pages", 0) for f in per_file)
+    extracted = sum(f.get("extracted_pages", 0) for f in per_file)
+    empty = sum(f.get("empty_pages", 0) for f in per_file)
+    failed = sum(f.get("failed_pages", 0) for f in per_file)
+    return {
+        "total_pages": total,
+        "extracted_pages": extracted,
+        "empty_pages": empty,
+        "failed_pages": failed,
+        "success_rate_percent": round((extracted / total) * 100, 2)
+        if total > 0
+        else 0.0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Ingestion
 # ---------------------------------------------------------------------------
+
+def ingest_chunks_with_stats(
+    chunks: List[Dict[str, Any]],
+    extraction_stats: List[Dict[str, Any]],
+    collection_name: str,
+    embeddings: Any = None,
+) -> Dict[str, Any]:
+    """Index chunks into a collection, keeping every index in sync.
+
+    - Vector store: replaced sources' points are deleted, new chunks added
+      (only new chunks are embedded — see ``upsert_chunks``).
+    - BM25 + JSONL corpus: same per-source replace semantics (``merge_chunk_corpus``).
+    - metadata.json: per-file stats merged, totals recomputed.
+
+    Returns ``{"ok", "store_mode", "metadata", "chunks_ingested"}``.
+    """
+    safe_collection = collection_name.strip().replace(" ", "_") or "default"
+
+    # 1. Vector store (Qdrant) — per-source replace + append
+    store_mode = upsert_chunks(safe_collection, chunks, embeddings)
+
+    # 2. BM25 index + JSONL corpus — same per-source semantics
+    merged_rows = merge_chunk_corpus(safe_collection, chunks)
+
+    # 3. metadata.json — merge per file, recompute totals
+    previous = load_collection_metadata(safe_collection) or {}
+    per_file = _merge_file_entries(
+        (previous.get("extraction_stats") or {}).get("per_file", []),
+        extraction_stats,
+    )
+    overall = _merge_totals(per_file)
+
+    metadata = {
+        "files": [f.get("file_name", "?") for f in per_file],
+        "total_pages": overall["total_pages"],
+        "total_chunks": len(merged_rows),
+        "chunk_size": CHUNKING.chunk_size,
+        "chunk_overlap": CHUNKING.chunk_overlap,
+        "processed_at": datetime.now().isoformat(),
+        "collection_name": safe_collection,
+        "extraction_stats": {
+            "overall": overall,
+            "per_file": per_file,
+        },
+    }
+
+    meta_dir = os.path.join(METADATA_DIR, safe_collection)
+    os.makedirs(meta_dir, exist_ok=True)
+    with open(os.path.join(meta_dir, "metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    st.session_state.document_metadata = metadata
+
+    return {
+        "ok": True,
+        "store_mode": store_mode,
+        "metadata": metadata,
+        "chunks_ingested": len(chunks),
+    }
+
 
 def process_and_index_pdfs(pdf_docs, collection_name: str) -> Dict[str, Any]:
     """
     Full ingestion pipeline:
       - Load pages from each PDF
       - Chunk with page-aware metadata
-      - Build and persist Qdrant vector store
-      - Build and pickle BM25 index
-      - Save metadata.json
+      - Delegate to ingest_chunks_with_stats() (Qdrant + BM25 + metadata.json,
+        all with per-file replace/append semantics)
 
     Returns a result dict with keys: ok, message, stats.
     """
-    safe_collection = collection_name.strip().replace(" ", "_") or "default"
-
     all_pages: List[Dict[str, Any]] = []
     extraction_stats: List[Dict[str, Any]] = []
-    files_info: List[Dict[str, Any]] = []
 
     total_pages_all = extracted_pages_all = empty_pages_all = failed_pages_all = 0
 
@@ -94,7 +200,6 @@ def process_and_index_pdfs(pdf_docs, collection_name: str) -> Dict[str, Any]:
         pages, stats = load_pdf_pages_with_stats(pdf)
         all_pages.extend(pages)
         extraction_stats.append(stats)
-        files_info.append({"name": pdf.name, "pages": stats["total_pages"]})
         total_pages_all += stats["total_pages"]
         extracted_pages_all += stats["extracted_pages"]
         empty_pages_all += stats["empty_pages"]
@@ -118,44 +223,14 @@ def process_and_index_pdfs(pdf_docs, collection_name: str) -> Dict[str, Any]:
             },
         }
 
-    build_vector_store_from_chunks(chunks, safe_collection)
-    save_chunk_corpus(safe_collection, chunks)
-
-    overall_success_rate = (
-        round((extracted_pages_all / total_pages_all) * 100, 2)
-        if total_pages_all > 0
-        else 0.0
+    ingestion = ingest_chunks_with_stats(
+        chunks=chunks,
+        extraction_stats=extraction_stats,
+        collection_name=collection_name,
     )
-
-    metadata = {
-        "files": [f["name"] for f in files_info],
-        "total_pages": total_pages_all,
-        "total_chunks": len(chunks),
-        "chunk_size": CHUNKING.chunk_size,
-        "chunk_overlap": CHUNKING.chunk_overlap,
-        "processed_at": datetime.now().isoformat(),
-        "collection_name": safe_collection,
-        "extraction_stats": {
-            "overall": {
-                "total_pages": total_pages_all,
-                "extracted_pages": extracted_pages_all,
-                "empty_pages": empty_pages_all,
-                "failed_pages": failed_pages_all,
-                "success_rate_percent": overall_success_rate,
-            },
-            "per_file": extraction_stats,
-        },
-    }
-
-    meta_dir = os.path.join(METADATA_DIR, safe_collection)
-    os.makedirs(meta_dir, exist_ok=True)
-    with open(os.path.join(meta_dir, "metadata.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
-
-    st.session_state.document_metadata = metadata
 
     return {
         "ok": True,
         "message": f"Indexed {len(pdf_docs)} PDF(s) successfully.",
-        "stats": metadata["extraction_stats"],
+        "stats": ingestion["metadata"]["extraction_stats"],
     }
