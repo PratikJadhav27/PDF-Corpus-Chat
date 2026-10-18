@@ -157,7 +157,7 @@ No micro-benchmarks were run for these (no baseline harness); fixes in ISSUE-011
 | ISSUE-000 | — | docs | Audit findings not recorded in repo | This document (`docs/project-audit` branch) | Document contains A–F + register | **Completed** (this commit) |
 | ISSUE-001 | P0 | bug/data | Re-ingest diverges Qdrant vs BM25/metadata ([helpers.py:121](app/helpers.py#L121)) | Per-file replace + append: filter-delete Qdrant points by `metadata.source`, merge `chunks.jsonl`, rebuild BM25 once, merge `metadata.json`; injectable embeddings for tests | `tests/test_ingestion_sync.py` (replace/append/consistency/metadata-merge/legacy-row retention) + full suite ≥166 passed | **Completed** 2026-10-18 |
 | ISSUE-002 | P1 | bug | Batch eval `TypeError` ([evaluation.py:201](app/views/evaluation.py#L201)) | Keyword call into `build_report`, read `summary`, persist report (no immediate rerun), opt-in LLM-judge toggle | `tests/test_eval_tab.py` (AppTest click, both paths) + suite | **Completed** 2026-10-19 |
-| ISSUE-003 | P1 | bug/stability | Duplicate widget key crash on repeated question | Index-based feedback keys | AppTest regression (two identical questions) + suite | Planned |
+| ISSUE-003 | P1 | bug/stability | Duplicate widget key crash on repeated question | Index-based feedback keys | AppTest regression (two identical questions) + suite | **Completed** 2026-10-19 |
 | ISSUE-004 | P1 | bug | Prompt Style selector no-op | Single `prompt_version` key end-to-end; display active version | Unit test on pipeline prompt selection + manual UI check | Planned |
 | ISSUE-005 | P1 | integrity/UX | Fabricated Analytics metrics (D2) | Render real baseline/session data; empty states when absent | AppTest with empty + populated baseline fixtures | Planned |
 | ISSUE-006 | P2 | bug | Recent-evals wrong keys | Map `evaluate_one` output keys | Unit test on table builder | Planned |
@@ -198,6 +198,12 @@ No micro-benchmarks were run for these (no baseline harness); fixes in ISSUE-011
 - **Root causes fixed:** positional call vs 4-arg signature; success metrics read non-existent top-level keys instead of `summary`; `st.rerun()` discarded the freshly computed report and export button; the in-app evaluator never requested LLM metrics, so the faithfulness card could never be populated.
 - **Commands + results:** `pytest tests/test_eval_tab.py -q` → **2 passed**; both tests **fail on pre-fix HEAD** with `TypeError: build_report() missing 3 required positional arguments` (verified by temporarily restoring HEAD's `evaluation.py`, then restoring the fix); `pytest tests/test_eval_tab.py tests/test_inference.py -q` → **3 passed**; full suite `pytest tests/ -q` → **174 passed, 11 warnings (third-party), exit 0** (baseline 172 + 2 new).
 - **Not verified / not run:** live in-app run against Gemini and real collections; LLM-judge scores on the real API; Docker build.
+
+### ISSUE-003 — duplicate widget keys on a repeated question (P1)
+- **Branch:** `fix/ISSUE-003-duplicate-widget-keys`; **Files changed:** `app/views/chat.py` (feedback buttons keyed by message position instead of question text: history entries use `hist_<index>`, the in-flight answer uses `live_<len(history)>`; `_render_ai_message` / `_render_feedback_row` now take an explicit `feedback_key`), `tests/test_chat_duplicate_questions.py` (new, 4 AppTest tests)
+- **Root cause fixed:** `up_{hash(question)}` / `dn_{hash(question)}` are content-derived, so two identical questions render two buttons with the same key and Streamlit raises `StreamlitDuplicateElementKey`, aborting the whole script (every tab, not just Chat). Position-based keys are unique by construction and stay stable while history is append-only.
+- **Commands + results:** `pytest tests/test_chat_duplicate_questions.py -q` → **4 passed**; **all three duplicate-key tests fail on pre-fix HEAD** with `StreamlitDuplicateElementKey: key='up_…'` (verified by temporarily restoring HEAD's `chat.py`, then restoring the fix); full suite `pytest tests/ -q` → **178 passed, 11 warnings (third-party), exit 0** (baseline 174 + 4 new).
+- **Not verified / not run:** manual browser click-through; persistence of feedback across reloads (ISSUE-009).
 
 ---
 
@@ -248,4 +254,5 @@ Scoring: 1–5, evidence-based. "Unverified" is used where this audit could not 
 | ISSUE-000 audit document | `docs/project-audit` | (this commit) | Sections A–F present; every finding cites evidence | ✅ Completed 2026-10-18 |
 | ISSUE-001 re-ingest sync | `fix/ISSUE-001-ingest-index-consistency` | (this commit) | `tests/test_ingestion_sync.py` 6 passed; full suite **172 passed**, exit 0 | ✅ Completed 2026-10-18 |
 | ISSUE-002 batch eval wiring | `fix/ISSUE-002-eval-report-wiring` | (this commit) | `tests/test_eval_tab.py` 2 passed (fail on pre-fix HEAD); full suite **174 passed**, exit 0 | ✅ Completed 2026-10-19 |
-| ISSUE-003 … ISSUE-013 | — | — | — | ⛔ Awaiting approval |
+| ISSUE-003 duplicate widget keys | `fix/ISSUE-003-duplicate-widget-keys` | (this commit) | `tests/test_chat_duplicate_questions.py` 4 passed (3 fail on pre-fix HEAD); full suite **178 passed**, exit 0 | ✅ Completed 2026-10-19 |
+| ISSUE-004 … ISSUE-013 | — | — | — | ⛔ Awaiting approval |

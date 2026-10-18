@@ -377,8 +377,18 @@ def render_sidebar(collections):
 # Chat Tab
 # ---------------------------------------------------------------------------
 
-def _render_ai_message(answer: str, docs: list, latency: dict, question: str):
-    """Render one complete AI response: processed answer + citations + source cards + feedback."""
+def _render_ai_message(
+    answer: str,
+    docs: list,
+    latency: dict,
+    question: str,
+    feedback_key: str,
+):
+    """Render one complete AI response: processed answer + citations + source cards + feedback.
+
+    ``feedback_key`` must be unique per rendered message: the same question can
+    legitimately appear more than once, so it cannot be derived from the text.
+    """
     # Process citations → HTML with pills
     processed_html, citation_list = _process_citations(answer, docs or [])
 
@@ -402,7 +412,7 @@ def _render_ai_message(answer: str, docs: list, latency: dict, question: str):
         _render_source_cards(docs)
 
     # Feedback row
-    _render_feedback_row(question)
+    _render_feedback_row(question, feedback_key)
 
 
 def render_chat_tab(collections):
@@ -412,7 +422,8 @@ def render_chat_tab(collections):
     st.markdown(_index_status_html(selected_collection), unsafe_allow_html=True)
 
     # ── Render existing conversation history ──────────────────────────────
-    for entry in st.session_state.get("chat_history", []):
+    history = st.session_state.get("chat_history", [])
+    for idx, entry in enumerate(history):
         with st.chat_message("user", avatar="👤"):
             st.markdown(entry["question"])
 
@@ -422,6 +433,8 @@ def render_chat_tab(collections):
                 entry.get("docs", []),
                 entry.get("latency", {}),
                 entry["question"],
+                # Index-based, not content-based: repeated questions are allowed.
+                feedback_key=f"hist_{idx}",
             )
 
     # ── Chat input (sticky bottom) ────────────────────────────────────────
@@ -448,7 +461,15 @@ def render_chat_tab(collections):
                 status.update(label="✅ Done", state="complete")
 
             if answer:
-                _render_ai_message(answer, docs or [], latency, user_question)
+                _render_ai_message(
+                    answer,
+                    docs or [],
+                    latency,
+                    user_question,
+                    # Distinct from every index rendered above; becomes hist_<n>
+                    # on the next run once this entry is in the history.
+                    feedback_key=f"live_{len(history)}",
+                )
 
                 # Persist to chat history
                 st.session_state.chat_history.append({
@@ -462,17 +483,17 @@ def render_chat_tab(collections):
                 })
 
 
-def _render_feedback_row(question: str):
-    """Compact inline thumbs feedback."""
+def _render_feedback_row(question: str, entry_key: str):
+    """Compact inline thumbs feedback, keyed by the message's position."""
     c1, c2, _, _ = st.columns([1, 1, 3, 1])
     with c1:
-        if st.button("👍", key=f"up_{hash(question)}", help="Helpful"):
+        if st.button("👍", key=f"up_{entry_key}", help="Helpful"):
             st.session_state.setdefault("feedback_data", []).append(
                 {"question": question, "helpful": True,
                  "timestamp": datetime.now().isoformat()}
             )
     with c2:
-        if st.button("👎", key=f"dn_{hash(question)}", help="Not helpful"):
+        if st.button("👎", key=f"dn_{entry_key}", help="Not helpful"):
             st.session_state.setdefault("feedback_data", []).append(
                 {"question": question, "helpful": False,
                  "timestamp": datetime.now().isoformat()}
