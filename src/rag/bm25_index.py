@@ -232,3 +232,52 @@ def bm25_search_collection(
         result_doc = {"text": row.get("text", ""), "metadata": row.get("metadata", {})}
         results.append((result_doc, float(h.score)))
     return results
+
+
+# ---------------------------------------------------------------------------
+# Corpus merge (ISSUE-001)
+# ---------------------------------------------------------------------------
+
+def _write_chunk_corpus_rows(collection_name: str, rows: List[Dict[str, Any]]) -> None:
+    """Overwrite the JSONL corpus file with the given rows."""
+    os.makedirs(_collection_dir(collection_name), exist_ok=True)
+    corpus_path = get_chunk_corpus_path(collection_name)
+    with open(corpus_path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def merge_chunk_corpus(
+    collection_name: str,
+    new_chunks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge newly ingested chunks into the corpus with per-source replace semantics.
+
+    Existing rows whose ``metadata.source`` matches a source present in
+    ``new_chunks`` are REPLACED; rows from all other sources (including legacy
+    rows without a ``source``) are preserved. The JSONL corpus is rewritten and
+    the BM25 index is rebuilt once from the merged texts, keeping the keyword
+    index consistent with the vector store (see src.rag.vector_store.upsert_chunks).
+
+    Returns the merged corpus rows.
+    """
+    replaced_sources = {
+        str(c.get("metadata", {}).get("source", "")).strip() for c in new_chunks
+    }
+    replaced_sources.discard("")
+
+    existing_rows = [
+        row
+        for row in load_chunk_corpus(collection_name)
+        if str(row.get("metadata", {}).get("source", "")).strip() not in replaced_sources
+    ]
+
+    new_rows: List[Dict[str, Any]] = [
+        {"text": c.get("text", ""), "metadata": c.get("metadata", {})}
+        for c in new_chunks
+    ]
+
+    merged_rows = existing_rows + new_rows
+    _write_chunk_corpus_rows(collection_name, merged_rows)
+    save_bm25_index(collection_name, [row.get("text", "") for row in merged_rows])
+    return merged_rows

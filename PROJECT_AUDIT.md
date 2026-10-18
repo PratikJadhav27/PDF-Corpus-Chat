@@ -155,7 +155,7 @@ No micro-benchmarks were run for these (no baseline harness); fixes in ISSUE-011
 | ID | Pri | Category | Problem | Solution | Verification | Status |
 |---|---|---|---|---|---|---|
 | ISSUE-000 | — | docs | Audit findings not recorded in repo | This document (`docs/project-audit` branch) | Document contains A–F + register | **Completed** (this commit) |
-| ISSUE-001 | P0 | bug/data | Re-ingest diverges Qdrant vs BM25/metadata ([helpers.py:121](app/helpers.py#L121)) | Per-file replace + append: filter-delete Qdrant points by `metadata.source`, merge `chunks.jsonl`, rebuild BM25 once, merge `metadata.json`; injectable embeddings for tests | `tests/test_ingestion_sync.py` (replace/append/consistency/metadata-merge/legacy-row retention) + full suite ≥166 passed | **In progress** |
+| ISSUE-001 | P0 | bug/data | Re-ingest diverges Qdrant vs BM25/metadata ([helpers.py:121](app/helpers.py#L121)) | Per-file replace + append: filter-delete Qdrant points by `metadata.source`, merge `chunks.jsonl`, rebuild BM25 once, merge `metadata.json`; injectable embeddings for tests | `tests/test_ingestion_sync.py` (replace/append/consistency/metadata-merge/legacy-row retention) + full suite ≥166 passed | **Completed** 2026-10-18 |
 | ISSUE-002 | P1 | bug | Batch eval `TypeError` ([evaluation.py:201](app/views/evaluation.py#L201)) | Correct call + AppTest/unit wiring test | New test + suite | Planned |
 | ISSUE-003 | P1 | bug/stability | Duplicate widget key crash on repeated question | Index-based feedback keys | AppTest regression (two identical questions) + suite | Planned |
 | ISSUE-004 | P1 | bug | Prompt Style selector no-op | Single `prompt_version` key end-to-end; display active version | Unit test on pipeline prompt selection + manual UI check | Planned |
@@ -186,6 +186,12 @@ No micro-benchmarks were run for these (no baseline harness); fixes in ISSUE-011
   - `git grep` secret scan (`AIza…`, `sk…`, hardcoded Langfuse keys) → **no matches**
   - Installed-source inspection: `langchain_qdrant.qdrant.construct_instance` (`force_recreate=False` appends), `qdrant_client.local` exclusive flock, langchain-qdrant payload keys (`page_content` / `metadata`) (**foundation for ISSUE-001**)
 - **Not verified / not run:** dependency CVE scan, live Gemini E2E, Docker build, runtime UI passes beyond AppTest reproductions, performance benchmarks (no baseline harness).
+
+### ISSUE-001 — re-ingestion index divergence (P0)
+- **Branch:** `fix/ISSUE-001-ingest-index-consistency`; **Files changed:** `src/rag/vector_store.py` (per-source point deletion via `metadata.source` payload filter; lock-safe `upsert_chunks()` using a single closed client; injectable `embeddings` for `build_vector_store_from_chunks`), `src/rag/bm25_index.py` (`merge_chunk_corpus()` — per-source replace, JSONL rewrite, single BM25 rebuild), `app/helpers.py` (new testable `ingest_chunks_with_stats()` orchestrating Qdrant + BM25 + merged `metadata.json`; `process_and_index_pdfs` now delegates to it), `tests/test_ingestion_sync.py` (new, 6 tests, hermetic fake embeddings + tmp cwd)
+- **Semantics implemented (decision D1):** re-ingesting `foo.pdf` deletes its previous points on the vector side and replaces its corpus rows; other files' data is preserved (never re-embedded); legacy corpus rows without a `source` are retained; `metadata.json` merges per-file entries in first-seen order with recomputed totals.
+- **Commands + results:** `pytest tests/test_ingestion_sync.py -q` → **6 passed** (after fixing two test-side issues found during verification: the fake embeddings must subclass `langchain_core.embeddings.Embeddings` for langchain-qdrant's constructor validation, and the "old content gone" assertion must query a token unique to the replaced text); full suite `pytest tests/ -q` → **172 passed, 11 warnings (third-party), exit 0** (baseline 166 + 6 new, no regressions); `git diff` reviewed — only the three intended files changed, `process_and_index_pdfs` return contract preserved, CI ingestion path (`build_vector_store_from_chunks` + `save_chunk_corpus`) unchanged.
+- **Not verified / not run:** live Gemini ingestion with real embeddings (fake embeddings used in tests; the real-embeddings path is the pre-existing `get_embeddings()` default), Docker build.
 
 ---
 
@@ -234,5 +240,5 @@ Scoring: 1–5, evidence-based. "Unverified" is used where this audit could not 
 | Issue | Branch | Commit | Verification | Status |
 |---|---|---|---|---|
 | ISSUE-000 audit document | `docs/project-audit` | (this commit) | Sections A–F present; every finding cites evidence | ✅ Completed 2026-10-18 |
-| ISSUE-001 re-ingest sync | `fix/ISSUE-001-ingest-index-consistency` | (pending) | `tests/test_ingestion_sync.py` + full suite | ⏳ In progress |
+| ISSUE-001 re-ingest sync | `fix/ISSUE-001-ingest-index-consistency` | (this commit) | `tests/test_ingestion_sync.py` 6 passed; full suite **172 passed**, exit 0 | ✅ Completed 2026-10-18 |
 | ISSUE-002 … ISSUE-013 | — | — | — | ⛔ Awaiting approval |
