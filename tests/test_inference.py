@@ -16,7 +16,8 @@ def test_run_rag_query_no_docs(monkeypatch):
     import streamlit as st
 
     # Prepare minimal Streamlit session_state using SimpleNamespace for attribute access
-    st.session_state = SimpleNamespace()
+    # (set via monkeypatch so the real proxy is restored after the test)
+    monkeypatch.setattr(st, "session_state", SimpleNamespace())
     st.session_state.retrieval_mode = "similarity"
     st.session_state.prompt_version = "v1_strict"
     st.session_state.top_k = 4
@@ -28,9 +29,11 @@ def test_run_rag_query_no_docs(monkeypatch):
         def similarity_search(self, query, k):
             return []
 
-    # Patch the vector store loader to return our mock
+    # Patch the loader where run_rag_query resolves it. Patching
+    # ``src.rag.vector_store`` only worked while this module happened to import
+    # inference first; any test that imports it earlier leaves that patch unused.
     monkeypatch.setattr(
-        "src.rag.vector_store.load_vector_store",
+        "src.rag.inference.load_vector_store",
         lambda collection, embeddings: MockStore()
     )
 

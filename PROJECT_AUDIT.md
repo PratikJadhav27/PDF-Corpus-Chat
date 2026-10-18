@@ -156,7 +156,7 @@ No micro-benchmarks were run for these (no baseline harness); fixes in ISSUE-011
 |---|---|---|---|---|---|---|
 | ISSUE-000 | — | docs | Audit findings not recorded in repo | This document (`docs/project-audit` branch) | Document contains A–F + register | **Completed** (this commit) |
 | ISSUE-001 | P0 | bug/data | Re-ingest diverges Qdrant vs BM25/metadata ([helpers.py:121](app/helpers.py#L121)) | Per-file replace + append: filter-delete Qdrant points by `metadata.source`, merge `chunks.jsonl`, rebuild BM25 once, merge `metadata.json`; injectable embeddings for tests | `tests/test_ingestion_sync.py` (replace/append/consistency/metadata-merge/legacy-row retention) + full suite ≥166 passed | **Completed** 2026-10-18 |
-| ISSUE-002 | P1 | bug | Batch eval `TypeError` ([evaluation.py:201](app/views/evaluation.py#L201)) | Correct call + AppTest/unit wiring test | New test + suite | Planned |
+| ISSUE-002 | P1 | bug | Batch eval `TypeError` ([evaluation.py:201](app/views/evaluation.py#L201)) | Keyword call into `build_report`, read `summary`, persist report (no immediate rerun), opt-in LLM-judge toggle | `tests/test_eval_tab.py` (AppTest click, both paths) + suite | **Completed** 2026-10-19 |
 | ISSUE-003 | P1 | bug/stability | Duplicate widget key crash on repeated question | Index-based feedback keys | AppTest regression (two identical questions) + suite | Planned |
 | ISSUE-004 | P1 | bug | Prompt Style selector no-op | Single `prompt_version` key end-to-end; display active version | Unit test on pipeline prompt selection + manual UI check | Planned |
 | ISSUE-005 | P1 | integrity/UX | Fabricated Analytics metrics (D2) | Render real baseline/session data; empty states when absent | AppTest with empty + populated baseline fixtures | Planned |
@@ -192,6 +192,12 @@ No micro-benchmarks were run for these (no baseline harness); fixes in ISSUE-011
 - **Semantics implemented (decision D1):** re-ingesting `foo.pdf` deletes its previous points on the vector side and replaces its corpus rows; other files' data is preserved (never re-embedded); legacy corpus rows without a `source` are retained; `metadata.json` merges per-file entries in first-seen order with recomputed totals.
 - **Commands + results:** `pytest tests/test_ingestion_sync.py -q` → **6 passed** (after fixing two test-side issues found during verification: the fake embeddings must subclass `langchain_core.embeddings.Embeddings` for langchain-qdrant's constructor validation, and the "old content gone" assertion must query a token unique to the replaced text); full suite `pytest tests/ -q` → **172 passed, 11 warnings (third-party), exit 0** (baseline 166 + 6 new, no regressions); `git diff` reviewed — only the three intended files changed, `process_and_index_pdfs` return contract preserved, CI ingestion path (`build_vector_store_from_chunks` + `save_chunk_corpus`) unchanged.
 - **Not verified / not run:** live Gemini ingestion with real embeddings (fake embeddings used in tests; the real-embeddings path is the pre-existing `get_embeddings()` default), Docker build.
+
+### ISSUE-002 — in-app batch evaluation wiring (P1)
+- **Branch:** `fix/ISSUE-002-eval-report-wiring`; **Files changed:** `app/views/evaluation.py` (keyword call `build_report(collection_name=…, retrieval_mode=…, top_k=…, results=…)`; success cards read `report["summary"]` and show `—` when a judge metric was not computed; report kept in `session_state["eval_report"]` and rendered outside the button branch instead of being wiped by `st.rerun()`; opt-in "Include LLM-judge metrics" checkbox forwarded to `evaluate_one`), `tests/test_eval_tab.py` (new, 2 AppTest tests), `tests/test_inference.py` (patch the loader binding `run_rag_query` actually resolves; restore `st.session_state` via monkeypatch)
+- **Root causes fixed:** positional call vs 4-arg signature; success metrics read non-existent top-level keys instead of `summary`; `st.rerun()` discarded the freshly computed report and export button; the in-app evaluator never requested LLM metrics, so the faithfulness card could never be populated.
+- **Commands + results:** `pytest tests/test_eval_tab.py -q` → **2 passed**; both tests **fail on pre-fix HEAD** with `TypeError: build_report() missing 3 required positional arguments` (verified by temporarily restoring HEAD's `evaluation.py`, then restoring the fix); `pytest tests/test_eval_tab.py tests/test_inference.py -q` → **3 passed**; full suite `pytest tests/ -q` → **174 passed, 11 warnings (third-party), exit 0** (baseline 172 + 2 new).
+- **Not verified / not run:** live in-app run against Gemini and real collections; LLM-judge scores on the real API; Docker build.
 
 ---
 
@@ -241,4 +247,5 @@ Scoring: 1–5, evidence-based. "Unverified" is used where this audit could not 
 |---|---|---|---|---|
 | ISSUE-000 audit document | `docs/project-audit` | (this commit) | Sections A–F present; every finding cites evidence | ✅ Completed 2026-10-18 |
 | ISSUE-001 re-ingest sync | `fix/ISSUE-001-ingest-index-consistency` | (this commit) | `tests/test_ingestion_sync.py` 6 passed; full suite **172 passed**, exit 0 | ✅ Completed 2026-10-18 |
-| ISSUE-002 … ISSUE-013 | — | — | — | ⛔ Awaiting approval |
+| ISSUE-002 batch eval wiring | `fix/ISSUE-002-eval-report-wiring` | (this commit) | `tests/test_eval_tab.py` 2 passed (fail on pre-fix HEAD); full suite **174 passed**, exit 0 | ✅ Completed 2026-10-19 |
+| ISSUE-003 … ISSUE-013 | — | — | — | ⛔ Awaiting approval |
