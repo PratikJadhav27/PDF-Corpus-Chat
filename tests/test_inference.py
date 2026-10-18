@@ -51,7 +51,7 @@ def test_run_rag_query_no_docs(monkeypatch):
 
     answer, docs, latency = run_rag_query(
         user_question="What is the revenue?",
-        prompt_type="standard",
+        prompt_version="v1_strict",
         temperature=0.0,
         collection_name="test_collection"
     )

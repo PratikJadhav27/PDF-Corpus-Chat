@@ -27,7 +27,7 @@ def _history_entry(question: str) -> dict:
         "answer": ANSWER,
         "latency": {"total_sec": 0.4, "retrieval_sec": 0.1, "llm_sec": 0.3},
         "docs": [],
-        "prompt_type": "v1_strict",
+        "prompt_version": "v1_strict",
         "collection": "default",
     }
 
@@ -74,7 +74,7 @@ def test_asking_the_same_question_twice_in_a_session(monkeypatch):
     """The user-facing reproduction: two identical chat inputs in one session."""
     import app.views.chat as chat_view
 
-    def fake_rag_query(question, prompt_type, temperature, collection_name):
+    def fake_rag_query(question, prompt_version, temperature, collection_name):
         return ANSWER, [], {"total_sec": 0.4, "retrieval_sec": 0.1, "llm_sec": 0.3}
 
     monkeypatch.setattr(chat_view, "run_rag_query", fake_rag_query)

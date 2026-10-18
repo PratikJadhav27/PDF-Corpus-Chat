@@ -46,5 +46,14 @@ ANSWER:
 DEFAULT_PROMPT_VERSION = "v1_strict"
 
 
+def resolve_prompt_version(version: str) -> str:
+    """Return ``version`` if it is a registered prompt, else the default.
+
+    Callers record the resolved value, so a legacy or misspelled version
+    (e.g. the old ``"standard"``) can never be logged as if it had been used.
+    """
+    return version if version in PROMPTS else DEFAULT_PROMPT_VERSION
+
+
 def get_prompt_template(version: str) -> str:
-    return PROMPTS.get(version, PROMPTS[DEFAULT_PROMPT_VERSION])
+    return PROMPTS[resolve_prompt_version(version)]

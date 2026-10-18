@@ -18,6 +18,7 @@ import streamlit as st
 
 from src.eval.evaluator import evaluate_one, build_report
 from src.rag.inference import run_rag_query
+from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION
 from src.utils.json_export import to_pretty_json
 
 
@@ -51,7 +52,8 @@ def _render_eval_report(report: dict):
     st.caption(
         f"Collection: {report.get('collection_name', '—')} · "
         f"mode: {report.get('retrieval_mode', '—')} · "
-        f"top-k: {report.get('top_k', '—')}"
+        f"top-k: {report.get('top_k', '—')} · "
+        f"prompt: {report.get('prompt_version', '—')}"
     )
     st.download_button(
         "⬇️ Export JSON Report",
@@ -196,6 +198,11 @@ def render_evaluation_tab(collections):
             eval_mode = st.selectbox("Mode", ["hybrid", "similarity", "mmr"], key="eval_mode")
         with col_b:
             eval_temp = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1, key="eval_temp")
+        # Batch runs use the same prompt style as Chat (ISSUE-004). The old
+        # hard-coded "standard" version no longer exists and silently fell back.
+        eval_prompt_version = st.session_state.get(
+            "prompt_version", DEFAULT_PROMPT_VERSION
+        )
         include_llm_metrics = st.checkbox(
             "Include LLM-judge metrics (faithfulness, relevance, completeness)",
             value=False,
@@ -218,7 +225,7 @@ def render_evaluation_tab(collections):
                     st.session_state.candidate_k     = 12
                     st.session_state.rerank_top_n    = 4
                     answer, docs, latency = run_rag_query(
-                        q, "standard", eval_temp, eval_collection
+                        q, eval_prompt_version, eval_temp, eval_collection
                     )
                     if answer:
                         ev = evaluate_one(
@@ -231,13 +238,15 @@ def render_evaluation_tab(collections):
 
                 status_txt.empty()
                 if results:
-                    st.session_state["eval_results"] = results
-                    st.session_state["eval_report"] = build_report(
+                    report = build_report(
                         collection_name=eval_collection,
                         retrieval_mode=eval_mode,
                         top_k=st.session_state.top_k,
                         results=results,
                     )
+                    report["prompt_version"] = eval_prompt_version
+                    st.session_state["eval_results"] = results
+                    st.session_state["eval_report"] = report
                 else:
                     st.session_state.pop("eval_report", None)
                     st.warning("No answers were produced — check the model configuration.")
