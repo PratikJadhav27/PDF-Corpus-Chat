@@ -200,15 +200,21 @@ def _render_source_cards(docs: list):
 # Latency badge
 # ---------------------------------------------------------------------------
 
-def _latency_badge(latency: dict) -> str:
+def _latency_badge(latency: dict, prompt_version: str = "") -> str:
     total = latency.get("total_sec", 0)
     ret   = latency.get("retrieval_sec", 0)
     llm   = latency.get("llm_sec", 0)
-    return (
+    badge = (
         f'<span class="dm-badge dm-badge-blue">⚡ {total:.2f}s total</span>&nbsp;'
         f'<span class="dm-badge dm-badge-violet">🔍 {ret:.2f}s retrieval</span>&nbsp;'
         f'<span class="dm-badge dm-badge-amber">✨ {llm:.2f}s LLM</span>'
     )
+    if prompt_version:
+        # Provenance: which prompt actually produced this answer.
+        badge += (
+            f'&nbsp;<span class="dm-badge dm-badge-green">{prompt_version}</span>'
+        )
+    return badge
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +227,8 @@ def _index_status_html(collection: str) -> str:
         f'<span class="dm-status-dot-inner"></span>'
         f'{collection}&nbsp;&nbsp;'
         f'<span style="color:var(--text-3);font-size:0.72rem;font-family:var(--font-mono);">'
-        f'Hybrid · Top-{st.session_state.get("top_k", 4)}'
+        f'Hybrid · Top-{st.session_state.get("top_k", 4)} · '
+        f'{st.session_state.get("prompt_version", DEFAULT_PROMPT_VERSION)}'
         f'</span></div>'
     )
 
@@ -344,19 +351,22 @@ def render_sidebar(collections):
 
             st.markdown('<div class="sidebar-label">Prompt Style</div>', unsafe_allow_html=True)
             prompt_keys = list(PROMPTS.keys())
+            # Single source of truth (ISSUE-004): this selector, the pipeline and
+            # the trace all use `prompt_version` — no mirrored `prompt_type` key.
             # Sanitise stored value — may be "standard" (legacy) which no longer exists
-            stored_prompt = st.session_state.get("prompt_type", DEFAULT_PROMPT_VERSION)
+            stored_prompt = st.session_state.get("prompt_version", DEFAULT_PROMPT_VERSION)
             if stored_prompt not in prompt_keys:
                 stored_prompt = DEFAULT_PROMPT_VERSION
-                st.session_state["prompt_type"] = DEFAULT_PROMPT_VERSION
-            prompt_type = st.selectbox(
+                st.session_state["prompt_version"] = DEFAULT_PROMPT_VERSION
+            prompt_version = st.selectbox(
                 "Prompt Style",
                 prompt_keys,
                 index=prompt_keys.index(stored_prompt),
-                key="sidebar_prompt_type",
-                label_visibility="visible",
+                key="sidebar_prompt_version",
+                label_visibility="collapsed",
             )
-            st.session_state["prompt_type"] = prompt_type
+            st.session_state["prompt_version"] = prompt_version
+            st.caption(f"Active prompt: {prompt_version}")
 
         # Clear chat
         st.markdown("---")
@@ -383,6 +393,7 @@ def _render_ai_message(
     latency: dict,
     question: str,
     feedback_key: str,
+    prompt_version: str = "",
 ):
     """Render one complete AI response: processed answer + citations + source cards + feedback.
 
@@ -404,8 +415,8 @@ def _render_ai_message(
     )
     st.markdown(full_html, unsafe_allow_html=True)
 
-    # Latency badges
-    st.markdown(_latency_badge(latency), unsafe_allow_html=True)
+    # Latency badges (+ the prompt version that produced this answer)
+    st.markdown(_latency_badge(latency, prompt_version), unsafe_allow_html=True)
 
     # Source cards (reliable native rendering)
     if docs:
@@ -435,6 +446,9 @@ def render_chat_tab(collections):
                 entry["question"],
                 # Index-based, not content-based: repeated questions are allowed.
                 feedback_key=f"hist_{idx}",
+                # Entries written before ISSUE-004 only have `prompt_type`;
+                # don't claim a version that was never recorded.
+                prompt_version=entry.get("prompt_version", ""),
             )
 
     # ── Chat input (sticky bottom) ────────────────────────────────────────
@@ -452,10 +466,12 @@ def render_chat_tab(collections):
         with st.chat_message("assistant", avatar="🧠"):
             with st.status("Thinking…", expanded=False) as status:
                 st.write("🔍 Retrieving relevant chunks…")
-                prompt_type = st.session_state.get("prompt_type", DEFAULT_PROMPT_VERSION)
+                prompt_version = st.session_state.get(
+                    "prompt_version", DEFAULT_PROMPT_VERSION
+                )
                 temperature  = st.session_state.get("temperature", 0.3)
                 answer, docs, latency = run_rag_query(
-                    user_question, prompt_type, temperature, selected_collection
+                    user_question, prompt_version, temperature, selected_collection
                 )
                 st.write(f"✨ Generating response ({latency.get('llm_sec', 0):.2f}s)…")
                 status.update(label="✅ Done", state="complete")
@@ -469,6 +485,7 @@ def render_chat_tab(collections):
                     # Distinct from every index rendered above; becomes hist_<n>
                     # on the next run once this entry is in the history.
                     feedback_key=f"live_{len(history)}",
+                    prompt_version=prompt_version,
                 )
 
                 # Persist to chat history
@@ -478,7 +495,7 @@ def render_chat_tab(collections):
                     "answer":    answer,
                     "latency":   latency,
                     "docs":      docs or [],
-                    "prompt_type": prompt_type,
+                    "prompt_version": prompt_version,
                     "collection":  selected_collection,
                 })
 

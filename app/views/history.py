@@ -81,7 +81,7 @@ def render_history_tab():
                     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:0.75rem;">
                         <span class="dm-badge dm-badge-blue">{chat.get('timestamp','')}</span>
                         <span class="dm-badge dm-badge-violet">{chat.get('collection','default')}</span>
-                        <span class="dm-badge dm-badge-amber">{chat.get('prompt_type','standard')}</span>
+                        <span class="dm-badge dm-badge-amber">{chat.get('prompt_version') or chat.get('prompt_type') or '—'}</span>
                         {f'<span class="dm-badge dm-badge-green">{lat_str}</span>' if lat_str else ''}
                     </div>
                     """,

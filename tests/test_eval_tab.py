@@ -31,7 +31,7 @@ DOCS = [
 CITATION_RATIO = 0.5
 
 
-def _fake_rag_query(question, prompt_type, temperature, collection_name):
+def _fake_rag_query(question, prompt_version, temperature, collection_name):
     """Deterministic stand-in for run_rag_query (no retrieval, no Gemini)."""
     return (
         "Alpha applies to bravo [a.pdf | page 1].",

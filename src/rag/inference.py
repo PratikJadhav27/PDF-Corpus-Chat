@@ -17,7 +17,7 @@ from src.rag.embeddings import get_embeddings
 from src.rag.vector_store import load_vector_store
 from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
 from src.rag.prompting import build_context_with_citations, build_grounded_prompt
-from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
+from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS, resolve_prompt_version
 from src.rag.validators import guard_answer_with_citation_check, citation_validity
 from src.observability.langfuse_guard import observe, CallbackHandler, langfuse_flush
 from src.observability.tracing import (
@@ -35,11 +35,16 @@ LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gemini-2.5-flash")
 @observe()
 def run_rag_query(
     user_question: str,
-    prompt_type: str,
+    prompt_version: str,
     temperature: float,
     collection_name: str,
 ) -> Tuple[Optional[str], Optional[List], Dict[str, float]]:
     """Full RAG pipeline.
+
+    ``prompt_version`` is the single source of truth for prompt style: it is
+    used to build the prompt *and* written to the trace, so the recorded
+    version is always the one that actually ran. Unknown/legacy versions
+    resolve to the default (see ``resolve_prompt_version``).
 
     Returns ``(answer, docs, latency)`` where:
     - ``answer``  is the generated string (or None on fatal error)
@@ -49,6 +54,7 @@ def run_rag_query(
     _NO_LATENCY = {"total_sec": 0.0, "retrieval_sec": 0.0, "llm_sec": 0.0}
     trace_id = new_trace_id()
     t0 = time.time()
+    resolved_prompt_version = resolve_prompt_version(prompt_version)
 
     embeddings = get_embeddings()
     db = load_vector_store(collection_name, embeddings)
@@ -61,7 +67,7 @@ def run_rag_query(
                 collection=collection_name,
                 query=user_question,
                 retrieval_mode=st.session_state.retrieval_mode,
-                prompt_version=st.session_state.prompt_version,
+                prompt_version=resolved_prompt_version,
                 model_name=LLM_MODEL_NAME,
                 temperature=temperature,
                 top_k=st.session_state.top_k,
@@ -78,7 +84,6 @@ def run_rag_query(
                 docs=[],
                 latency_sec={"total_sec": round(time.time() - t0, 4)},
                 error="vector_store_missing",
-                prompt_style=prompt_type,
             )
         )
         st.error(
@@ -114,7 +119,7 @@ def run_rag_query(
                 collection=collection_name,
                 query=user_question,
                 retrieval_mode=st.session_state.retrieval_mode,
-                prompt_version=st.session_state.prompt_version,
+                prompt_version=resolved_prompt_version,
                 model_name=LLM_MODEL_NAME,
                 temperature=temperature,
                 top_k=st.session_state.top_k,
@@ -134,7 +139,6 @@ def run_rag_query(
                     "total_sec": round(time.time() - t0, 4),
                 },
                 answer_preview=response[:500],
-                prompt_style=prompt_type,
             )
         )
         return response, [], {"total_sec": round(time.time() - t0, 4), "retrieval_sec": retrieval_sec, "llm_sec": 0.0}
@@ -142,7 +146,7 @@ def run_rag_query(
     # --- Generation ---
     context = build_context_with_citations(docs)
     prompt = build_grounded_prompt(
-        context=context, question=user_question, version=st.session_state.prompt_version
+        context=context, question=user_question, version=resolved_prompt_version
     )
     model = ChatGoogleGenerativeAI(model=LLM_MODEL_NAME, temperature=temperature)
 
@@ -158,7 +162,7 @@ def run_rag_query(
                 collection=collection_name,
                 query=user_question,
                 retrieval_mode=st.session_state.retrieval_mode,
-                prompt_version=st.session_state.prompt_version,
+                prompt_version=resolved_prompt_version,
                 model_name=LLM_MODEL_NAME,
                 temperature=temperature,
                 top_k=st.session_state.top_k,
@@ -179,7 +183,6 @@ def run_rag_query(
                     "total_sec": round(time.time() - t0, 4),
                 },
                 error=str(e),
-                prompt_style=prompt_type,
             )
         )
         st.error(f"Model error: {e}")
@@ -196,7 +199,7 @@ def run_rag_query(
             collection=collection_name,
             query=user_question,
             retrieval_mode=st.session_state.retrieval_mode,
-            prompt_version=st.session_state.prompt_version,
+            prompt_version=resolved_prompt_version,
             model_name=LLM_MODEL_NAME,
             temperature=temperature,
             top_k=st.session_state.top_k,
@@ -218,7 +221,6 @@ def run_rag_query(
             },
             citation_validity_ratio=citation_stats.get("validity_ratio", 0.0),
             answer_preview=(response or "")[:500],
-            prompt_style=prompt_type,
         )
     )
     langfuse_flush()
