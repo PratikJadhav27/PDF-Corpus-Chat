@@ -4,18 +4,21 @@ app/views/evaluation.py
 Tab 2 — Analytics & Evaluation Dashboard.
 
 Shows:
-  - 4 metric cards (Faithfulness, Citation Validity, Latency, Entailment)
-  - Retrieval strategy benchmark (Streamlit-native progress bars — no raw HTML)
-  - Recent evaluation runs table
+  - 4 metric cards read from the most recent real evaluation run
+  - Retrieval strategy benchmark read from evals/baselines/latest.json
+  - Recent evaluation runs table (this session)
   - In-app batch evaluation runner (collapsed expander)
+
+Every value on this tab comes from an artifact written by an actual run
+(ISSUE-005). Unmeasured metrics render as "—" with a reason, and missing
+artifacts render an empty state with the command that produces them — the tab
+never falls back to demo numbers.
 """
-import json
-import time
 from datetime import datetime
-from pathlib import Path
 
 import streamlit as st
 
+from app import analytics
 from src.eval.evaluator import evaluate_one, build_report
 from src.rag.inference import run_rag_query
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION
@@ -25,16 +28,6 @@ from src.utils.json_export import to_pretty_json
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _load_baseline() -> dict:
-    try:
-        p = Path("evals/baselines/latest.json")
-        if p.exists():
-            return json.loads(p.read_text())
-    except Exception:
-        pass
-    return {}
-
 
 def _fmt_score(value) -> str:
     """Format an optional 0-1 score; "—" when the metric was not computed."""
@@ -63,52 +56,67 @@ def _render_eval_report(report: dict):
     )
 
 
-def _metric_card(col, label: str, value: str, trend: str, color: str, icon: str, trend_cls: str):
-    """Render a single metric card using st.markdown inside a column."""
+def _metric_card(col, card: dict):
+    """Render one headline card; unmeasured metrics are greyed out, not faked."""
     with col:
+        value_color = card["color"] if card["measured"] else "#64748B"
+        trend_html = (
+            f'<span class="dm-trend {card["trend_cls"]}">{card["trend"]}</span>'
+            if card["trend"]
+            else ""
+        )
         st.markdown(
             f"""
             <div class="dm-metric-card">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                     <div>
-                        <div class="dm-metric-label">{label}</div>
-                        <div class="dm-metric-value" style="color:{color};">{value}</div>
+                        <div class="dm-metric-label">{card["label"]}</div>
+                        <div class="dm-metric-value" style="color:{value_color};">{card["value"]}</div>
                     </div>
-                    <span style="font-size:1.6rem;opacity:0.5;">{icon}</span>
+                    <span style="font-size:1.6rem;opacity:0.5;">{card["icon"]}</span>
                 </div>
-                <span class="dm-trend {trend_cls}">{trend}</span>
+                {trend_html}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
 
-def _benchmark_section():
-    """Render the retrieval strategy benchmark using Streamlit-native components."""
+def _score_text(value, as_percent: bool) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.1%}" if as_percent else f"{value:.3f}"
+
+
+def _benchmark_section(benchmark: dict):
+    """Render the retrieval strategy benchmark from the recorded baseline."""
     st.markdown('<div class="dm-section">🏆 Retrieval Strategy Benchmark</div>', unsafe_allow_html=True)
-    st.caption("Recall@5 · nDCG@5 on golden evaluation set")
+    rows = analytics.benchmark_rows(benchmark)
 
-    strategies = [
-        {"name": "Hybrid (Dense + BM25)",        "recall": 0.948, "ndcg": 0.912,
-         "color": "#3B82F6", "active": True},
-        {"name": "Dense Similarity (Cosine)",     "recall": 0.864, "ndcg": 0.835,
-         "color": "#22D3EE", "active": False},
-        {"name": "Maximal Marginal Relevance",    "recall": 0.812, "ndcg": 0.790,
-         "color": "#8B5CF6", "active": False},
-        {"name": "Sparse BM25 Keyword",           "recall": 0.695, "ndcg": 0.684,
-         "color": "#64748B", "active": False},
-    ]
+    if not rows:
+        st.markdown(
+            '<div class="dm-empty"><div class="icon">🏆</div>'
+            'No retrieval benchmark has been recorded yet.<br>'
+            'Run the benchmark script to measure Recall@k and nDCG@k.</div>',
+            unsafe_allow_html=True,
+        )
+        st.code(analytics.BENCHMARK_COMMAND, language="bash")
+        return
 
-    for s in strategies:
-        active_tag = " ✦ Production" if s["active"] else ""
-        label_html = f"""
-        <div class="dm-bench-label">
-            <span>{s['name']}<span style="color:#10B981;font-size:0.68rem;margin-left:6px;">{active_tag}</span></span>
-            <span class="score">Recall {s['recall']:.1%} · nDCG {s['ndcg']:.3f}</span>
-        </div>
-        """
-        st.markdown(label_html, unsafe_allow_html=True)
-        st.progress(s["recall"], text="")
+    st.caption(analytics.benchmark_caption(benchmark))
+    for row in rows:
+        active_tag = " ✦ Production" if row["active"] else ""
+        st.markdown(
+            f"""
+            <div class="dm-bench-label">
+                <span>{row["name"]}<span style="color:#10B981;font-size:0.68rem;margin-left:6px;">{active_tag}</span></span>
+                <span class="score">Recall {_score_text(row["recall"], True)} · nDCG {_score_text(row["ndcg"], False)}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if row["recall"] is not None:
+            st.progress(min(max(row["recall"], 0.0), 1.0), text="")
 
 
 def _recent_evals_section():
@@ -155,22 +163,19 @@ def render_evaluation_tab(collections):
         unsafe_allow_html=True,
     )
 
-    baseline = _load_baseline()
-    faithfulness = baseline.get("avg_faithfulness", 0.89)
-    citation_val = baseline.get("avg_citation_validity", 0.91)
-    avg_latency  = baseline.get("avg_latency_sec", 1.24)
-    entailment   = baseline.get("avg_entailment_rate", 0.87)
+    # Real runs only: the in-session batch report (if any) plus the artifacts
+    # the CLI/CI wrote to evals/reports/, newest first.
+    reports = analytics.merge_reports(
+        st.session_state.get("eval_report"),
+        analytics.load_eval_reports(),
+    )
 
     # ── 4 Metric cards ────────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
-    _metric_card(c1, "AVG FAITHFULNESS",  f"{faithfulness:.2f}", "↑ +4.2% vs last run",
-                 "#3B82F6", "🎯", "dm-trend-up")
-    _metric_card(c2, "CITATION VALIDITY", f"{citation_val:.2f}", "↑ +2.8% vs last run",
-                 "#10B981", "🔗", "dm-trend-up")
-    _metric_card(c3, "AVG LATENCY",       f"{avg_latency:.2f}s", "↓ −180ms improving",
-                 "#F59E0B", "⚡", "dm-trend-down")
-    _metric_card(c4, "ENTAILMENT RATE",   f"{entailment:.2f}",   "± stable",
-                 "#8B5CF6", "🧩", "dm-trend-stable")
+    cards = analytics.metric_cards(reports)
+    cols = st.columns(4)
+    for col, card in zip(cols, cards):
+        _metric_card(col, card)
+    st.caption(analytics.report_caption(reports[0] if reports else None))
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -178,7 +183,7 @@ def render_evaluation_tab(collections):
     col_left, col_right = st.columns([6, 4])
 
     with col_left:
-        _benchmark_section()
+        _benchmark_section(analytics.load_benchmark())
 
     with col_right:
         _recent_evals_section()
