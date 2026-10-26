@@ -19,6 +19,7 @@ Design decisions:
 """
 
 import logging
+import math
 import re
 from typing import Any, Dict, List, Optional
 
@@ -91,6 +92,14 @@ def _overlap_score(query: str, text: str) -> float:
 _MAX_CANDIDATES_FOR_CE = 15  # only score top-N RRF candidates with the CE
 
 
+def _sigmoid(x: float) -> float:
+    """Map an unbounded cross-encoder logit to a 0-1 relevance probability."""
+    if x >= 0:
+        return 1.0 / (1.0 + math.exp(-x))
+    z = math.exp(x)
+    return z / (1.0 + z)
+
+
 def _cross_encoder_scores(query: str, texts: List[str]) -> List[float]:
     """Return a CE score for each (query, text) pair. Scores are raw logits (higher = more relevant)."""
     model = _CE_MODEL
@@ -122,9 +131,12 @@ def rerank_candidates(
 
     Returns:
         Top-N candidates sorted by rerank_score descending.
-        Each dict gains two new keys:
-          - rerank_score : normalised score used for final ordering
-          - ce_score     : raw cross-encoder logit (or overlap score if CE unavailable)
+        Each dict gains three new keys:
+          - rerank_score : raw ranking signal (CE logit, or overlap score if CE unavailable)
+          - ce_score     : the same raw value, kept for traces
+          - relevance    : 0-1 score for display — sigmoid of the CE logit, or the
+                           overlap score as-is (it is already a 0-1 fraction).
+                           Never format the raw logits as percentages.
     """
     if not candidates:
         return []
@@ -134,12 +146,19 @@ def rerank_candidates(
     texts = [c.get("text", "") for c in pool]
 
     ce_scores = _cross_encoder_scores(query, texts)
+    # The lexical fallback already returns a 0-1 overlap fraction; real
+    # cross-encoder output is an unbounded logit, so it needs a sigmoid
+    # before anything can show it as a relevance percentage.
+    cross_encoder = _CE_MODEL is not None
 
     scored: List[Dict[str, Any]] = []
     for c, ce in zip(pool, ce_scores):
         row = dict(c)
         row["ce_score"] = round(ce, 6)
         row["rerank_score"] = round(ce, 6)   # CE score IS the ranking signal
+        row["relevance"] = round(
+            _sigmoid(ce) if cross_encoder else min(max(ce, 0.0), 1.0), 4
+        )
         scored.append(row)
 
     scored.sort(key=lambda x: x["rerank_score"], reverse=True)

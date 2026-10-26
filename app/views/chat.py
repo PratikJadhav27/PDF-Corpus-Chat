@@ -142,6 +142,32 @@ def _refs_html(citation_list: list) -> str:
 # Source card renderer (reliable per-card calls, no big HTML blob)
 # ---------------------------------------------------------------------------
 
+def _relevance_label(metadata: dict) -> str:
+    """
+    Build the source card's relevance badge, or "" when there is no display score.
+
+    Hybrid retrieval stores its scores under ``metadata["retrieval"]``; neither
+    the flat ``rerank_score`` this used to read nor a flat ``score`` is ever
+    written. The reranked score itself is an unbounded cross-encoder logit, so
+    only the normalised ``retrieval["relevance"]`` fraction (0-1) is formatted —
+    formatting a raw logit as a percentage would print nonsense like -320%.
+    """
+    retrieval = (metadata or {}).get("retrieval")
+    if not isinstance(retrieval, dict):
+        return ""
+
+    relevance = retrieval.get("relevance")
+    if relevance is None:
+        return ""
+    try:
+        fraction = float(relevance)
+    except (TypeError, ValueError):
+        return ""
+
+    fraction = min(max(fraction, 0.0), 1.0)
+    return f"▲ {fraction:.1%} relevance"
+
+
 def _render_source_cards(docs: list):
     """
     Render source reference cards below an AI message.
@@ -167,7 +193,6 @@ def _render_source_cards(docs: list):
     for i, doc in enumerate(docs[:8]):   # max 8 total
         fname   = os.path.basename(doc.metadata.get("source", "Unknown"))
         page    = doc.metadata.get("page_number", "?")
-        score   = doc.metadata.get("rerank_score") or doc.metadata.get("score")
         excerpt = (
             doc.page_content[:140]
             .replace("<", "&lt;")
@@ -177,11 +202,10 @@ def _render_source_cards(docs: list):
             .strip()
         )
 
-        score_row = ""
-        if score is not None:
-            score_row = (
-                f'<div class="dm-sc2-score">▲ {score:.1%} relevance</div>'
-            )
+        score_label = _relevance_label(doc.metadata)
+        score_row = (
+            f'<div class="dm-sc2-score">{score_label}</div>' if score_label else ""
+        )
 
         card_html = (
             f'<div class="dm-source-card-v2">'
