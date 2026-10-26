@@ -75,6 +75,7 @@ def retrieve_hybrid_reranked(
             "rrf_score": row.get("rrf_score"),
             "rerank_score": row.get("rerank_score"),
             "ce_score": row.get("ce_score"),
+            "relevance": row.get("relevance"),
             "vector_score": row.get("vector_score"),
             "bm25_score": row.get("bm25_score"),
             "channels": row.get("channels", []),
