@@ -51,6 +51,13 @@ BENCHMARK_COMMAND = (
     "    --collection <name> --top-k 5"
 )
 
+# Recent-evaluations table (ISSUE-006). ``evaluate_one()`` emits the citation
+# metrics at the top level and the judge metrics under ``llm_metrics``, so those
+# are the only keys read here.
+RECENT_LIMIT = 10
+PASS_THRESHOLD = 0.70
+QUESTION_WIDTH = 60
+
 
 # ---------------------------------------------------------------------------
 # Reading artifacts
@@ -322,4 +329,100 @@ def report_caption(report: Optional[dict]) -> str:
     total = (report.get("summary") or {}).get("total_questions")
     if total:
         parts.append(f"{total} questions")
+    return " · ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Recent-evaluations table
+# ---------------------------------------------------------------------------
+
+def _judge_score(llm_metrics, name: str) -> Optional[float]:
+    """Read ``llm_metrics[name]["score"]`` (or a bare number), else ``None``.
+
+    ``evaluate_one()`` sets ``llm_metrics`` to ``None`` when judging was not
+    requested and to ``{"error": ...}`` when the judge call failed; neither is
+    a measured score, so both read as missing instead of zero.
+    """
+    if not isinstance(llm_metrics, dict) or "error" in llm_metrics:
+        return None
+    entry = llm_metrics.get(name)
+    if isinstance(entry, dict):
+        entry = entry.get("score")
+    return _as_float(entry)
+
+
+def _truncate(text, width: int = QUESTION_WIDTH) -> str:
+    """Collapse whitespace and shorten to ``width`` characters, with an ellipsis
+    only when something was actually cut."""
+    text = " ".join(str(text or "").split())
+    if len(text) <= width:
+        return text
+    return text[: width - 1].rstrip() + "…"
+
+
+def _citation_counts(row: dict) -> Optional[str]:
+    """``"valid/total"`` from the counts ``evaluate_one()`` reports, else ``None``."""
+    total = _as_float(row.get("citation_count"))
+    if total is None:
+        return None
+    valid = _as_float(row.get("valid_citation_count")) or 0.0
+    return f"{int(valid)}/{int(total)}"
+
+
+def _row_status(faithfulness: Optional[float], citation: Optional[float],
+                is_idk: bool) -> str:
+    """✅ / ⚠️ / — from the scores that were actually measured.
+
+    A refusal has no answer to ground, so it is not scored. Otherwise the run
+    passes only when every measured quality score clears ``PASS_THRESHOLD`` —
+    a faithful answer with invalid citations is still a weak run.
+    """
+    if is_idk:
+        return "—"
+    measured = [score for score in (faithfulness, citation) if score is not None]
+    if not measured:
+        return "—"
+    return "✅" if min(measured) >= PASS_THRESHOLD else "⚠️"
+
+
+def recent_eval_rows(results, limit: int = RECENT_LIMIT) -> List[dict]:
+    """Turn ``evaluate_one()`` outputs into newest-first table rows.
+
+    ``results`` is the session's append-ordered list. Every field is either the
+    value the evaluator produced or ``None`` (rendered as "—"), never a default
+    that would read as a real score.
+    """
+    items = [r for r in (results or []) if isinstance(r, dict)]
+    if limit and limit > 0:
+        items = items[-limit:]
+
+    rows = []
+    for row in reversed(items):
+        faithfulness = _judge_score(row.get("llm_metrics"), "faithfulness")
+        citation = _as_float(row.get("citation_validity_ratio"))
+        rows.append(
+            {
+                "question": _truncate(row.get("question", "")),
+                "faithfulness": faithfulness,
+                "citation": citation,
+                "citations": _citation_counts(row),
+                "latency": _as_float(row.get("latency_sec")),
+                "status": _row_status(
+                    faithfulness, citation, bool(row.get("is_idk"))
+                ),
+            }
+        )
+    return rows
+
+
+def recent_eval_caption(total: int, shown: int) -> str:
+    """Provenance and legend for the recent-evaluations table."""
+    label = "question" if total == 1 else "questions"
+    parts = [f"This session · {total} evaluated {label}"]
+    if shown < total:
+        parts.append(f"showing the newest {shown}")
+    parts.append(
+        f"✅ ≥ {PASS_THRESHOLD:.2f} on every measured score · "
+        "⚠️ below · — refusal or not measured"
+    )
     return " · ".join(parts)

@@ -120,10 +120,16 @@ def _benchmark_section(benchmark: dict):
 
 
 def _recent_evals_section():
-    """Show recent eval results table or empty state."""
+    """Show this session's evaluated questions, or an honest empty state.
+
+    Rows come from ``analytics.recent_eval_rows``, which reads the keys
+    ``evaluate_one()`` actually writes (``citation_validity_ratio`` and
+    ``llm_metrics``) instead of the old ``faithfulness_score`` /
+    ``citation_validity.validity_ratio`` pair that never existed (ISSUE-006).
+    """
     st.markdown('<div class="dm-section">📋 Recent Evaluations</div>', unsafe_allow_html=True)
-    recent = st.session_state.get("eval_results", [])
-    if not recent:
+    results = st.session_state.get("eval_results", [])
+    if not isinstance(results, list) or not results:
         st.markdown(
             '<div class="dm-empty"><div class="icon">📊</div>'
             'No evaluation runs yet.<br>Run a batch evaluation below.</div>',
@@ -132,20 +138,22 @@ def _recent_evals_section():
         return
 
     import pandas as pd
-    rows = []
-    for r in list(reversed(recent))[:10]:
-        faith = r.get("faithfulness_score", 0)
-        cit   = r.get("citation_validity", {}).get("validity_ratio", 0)
-        lat   = r.get("latency_sec", 0)
-        rows.append({
-            "Question":     r.get("question", "")[:60] + "…",
-            "Faithfulness": f"{faith:.2f}",
-            "Citation":     f"{cit:.2f}",
-            "Latency":      f"{lat:.2f}s",
-            "Status":       "✅" if faith >= 0.7 else "⚠️",
+    rows = analytics.recent_eval_rows(results)
+    table = []
+    for row in rows:
+        citation = _fmt_score(row["citation"])
+        if row["citations"] and citation != "—":
+            citation = f"{citation} ({row['citations']})"
+        table.append({
+            "Question":     row["question"],
+            "Faithfulness": _fmt_score(row["faithfulness"]),
+            "Citation":     citation,
+            "Latency":      "—" if row["latency"] is None else f"{row['latency']:.2f}s",
+            "Status":       row["status"],
         })
-    df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
+    st.caption(analytics.recent_eval_caption(len(results), len(rows)))
 
 
 # ---------------------------------------------------------------------------
@@ -179,14 +187,13 @@ def render_evaluation_tab(collections):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Benchmark + Recent evals side by side ─────────────────────────────
-    col_left, col_right = st.columns([6, 4])
+    # ── Benchmark, then the recent-evaluations table at full width ────────
+    # The table carries question, faithfulness, citation, latency and status;
+    # in a 40% column the measured columns fell outside the visible area.
+    _benchmark_section(analytics.load_benchmark())
 
-    with col_left:
-        _benchmark_section(analytics.load_benchmark())
-
-    with col_right:
-        _recent_evals_section()
+    st.markdown("<br>", unsafe_allow_html=True)
+    _recent_evals_section()
 
     st.markdown("<br>", unsafe_allow_html=True)
 
