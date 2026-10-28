@@ -21,6 +21,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.rag.collection_names import VECTOR_STORES_DIR, collection_path
+
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
@@ -33,8 +35,9 @@ _INDEX_CACHE: Dict[str, "SimpleBM25"] = {}
 # ---------------------------------------------------------------------------
 
 def _collection_dir(collection_name: str) -> str:
-    safe = (collection_name or "default").strip().replace(" ", "_")
-    return f"vector_stores/{safe}"
+    # Same containment rules as the Qdrant store (ISSUE-010): the corpus and
+    # index live beside the vector store, so they must never escape it either.
+    return collection_path(VECTOR_STORES_DIR, collection_name)
 
 
 def get_chunk_corpus_path(collection_name: str) -> str:

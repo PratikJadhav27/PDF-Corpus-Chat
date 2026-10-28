@@ -14,6 +14,7 @@ UI design: DocMind dark theme.
   - Chat turns and 👍/👎 feedback are appended to disk (app/history_store.py),
     so a reload restores the log and the thumbs show their saved verdict
 """
+import html
 import os
 import re
 from datetime import datetime
@@ -23,7 +24,7 @@ import streamlit as st
 from src.config import CHUNKING
 from src.rag.inference import run_rag_query
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
-from app.helpers import get_collections, process_and_index_pdfs
+from app.helpers import create_collection, get_collections, process_and_index_pdfs
 from app.history_store import (
     append_entry,
     append_feedback,
@@ -55,8 +56,10 @@ def _process_citations(answer: str, docs: list) -> tuple:
     def _make_pill(match):
         raw = match.group(1).strip()          # e.g. "guide.pdf | page 2"
         parts = [p.strip() for p in raw.split("|")]
-        fname_raw = parts[0] if parts else raw
-        page_raw  = parts[1] if len(parts) > 1 else ""
+        # The answer's angle brackets were escaped before matching, so undo that
+        # here: names are kept raw and escaped once at each HTML sink below.
+        fname_raw = html.unescape(parts[0] if parts else raw)
+        page_raw  = html.unescape(parts[1]) if len(parts) > 1 else ""
         page_num  = re.sub(r"[^0-9]", "", page_raw)
 
         if raw not in citation_map:
@@ -75,7 +78,7 @@ def _process_citations(answer: str, docs: list) -> tuple:
                 )
                 page_match = (not page_num) or (pg == page_num)
                 if fname_match and page_match:
-                    excerpt = doc.page_content[:120].replace('"', '&quot;').replace('\n', ' ').strip()
+                    excerpt = doc.page_content[:120].replace("\n", " ").strip()
                     break
             citation_list.append((idx, fname_raw, page_raw, excerpt))
         else:
@@ -91,7 +94,9 @@ def _process_citations(answer: str, docs: list) -> tuple:
             if _idx == idx and _exc:
                 tooltip += f"\n\n{_exc[:100]}…"
                 break
-        tooltip = tooltip.replace('"', '&quot;').replace("'", '&#39;')
+        # Filenames and excerpts come from documents (and the answer): escape
+        # the whole tooltip so it cannot close the attribute it lives in.
+        tooltip = html.escape(tooltip, quote=True)
 
         return (
             f'<sup><span class="dm-cite-pill" data-tooltip="{tooltip}">'
@@ -129,13 +134,13 @@ def _refs_html(citation_list: list) -> str:
         return ""
     items = ""
     for idx, fname, page, excerpt in citation_list:
-        short = os.path.basename(fname)
+        short = html.escape(os.path.basename(fname), quote=True)
         items += (
             f'<div class="dm-ref-item">'
             f'  <span class="dm-ref-num">{idx}</span>'
             f'  <span class="dm-ref-text">'
             f'    <span class="dm-ref-file">{short}</span>'
-            f'    <span class="dm-ref-page">  ·  {page}</span>'
+            f'    <span class="dm-ref-page">  ·  {html.escape(str(page))}</span>'
             f'  </span>'
             f'</div>'
         )
@@ -200,15 +205,12 @@ def _render_source_cards(docs: list):
     cols = st.columns(n) if n > 0 else []
 
     for i, doc in enumerate(docs[:8]):   # max 8 total
-        fname   = os.path.basename(doc.metadata.get("source", "Unknown"))
-        page    = doc.metadata.get("page_number", "?")
-        excerpt = (
-            doc.page_content[:140]
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("\n", " ")
-            .strip()
+        # Names, page labels and excerpts are all data: escape them once here,
+        # then the card markup below only ever contains safe text (ISSUE-010).
+        fname   = html.escape(os.path.basename(doc.metadata.get("source", "Unknown")), quote=True)
+        page    = html.escape(str(doc.metadata.get("page_number", "?")))
+        excerpt = html.escape(
+            doc.page_content[:140].replace("\n", " ").strip(), quote=True
         )
 
         score_label = _relevance_label(doc.metadata)
@@ -245,7 +247,8 @@ def _latency_badge(latency: dict, prompt_version: str = "") -> str:
     if prompt_version:
         # Provenance: which prompt actually produced this answer.
         badge += (
-            f'&nbsp;<span class="dm-badge dm-badge-green">{prompt_version}</span>'
+            f'&nbsp;<span class="dm-badge dm-badge-green">'
+            f'{html.escape(str(prompt_version))}</span>'
         )
     return badge
 
@@ -258,10 +261,10 @@ def _index_status_html(collection: str) -> str:
     return (
         f'<div class="dm-status-bar">'
         f'<span class="dm-status-dot-inner"></span>'
-        f'{collection}&nbsp;&nbsp;'
+        f'{html.escape(str(collection))}&nbsp;&nbsp;'
         f'<span style="color:var(--text-3);font-size:0.72rem;font-family:var(--font-mono);">'
         f'Hybrid · Top-{st.session_state.get("top_k", 4)} · '
-        f'{st.session_state.get("prompt_version", DEFAULT_PROMPT_VERSION)}'
+        f'{html.escape(str(st.session_state.get("prompt_version", DEFAULT_PROMPT_VERSION)))}'
         f'</span></div>'
     )
 
@@ -293,7 +296,8 @@ def render_sidebar(collections):
         # Active collection badge
         current = st.session_state.get("current_collection", "default")
         st.markdown(
-            f'<div class="collection-badge"><div class="dot"></div>{current}</div>',
+            f'<div class="collection-badge"><div class="dot"></div>'
+            f'{html.escape(str(current))}</div>',
             unsafe_allow_html=True,
         )
 
@@ -319,12 +323,9 @@ def render_sidebar(collections):
         )
         if new_col and new_col.strip():
             if st.button("＋ Create Collection", key="create_collection_btn", use_container_width=True):
-                safe = new_col.strip().replace(" ", "_")
-                import os as _os
-                _os.makedirs(f"vector_stores/{safe}", exist_ok=True)
-                _os.makedirs(f"metadata/{safe}", exist_ok=True)
+                safe = create_collection(new_col)
                 st.session_state.current_collection = safe
-                st.success(f"✅ '{new_col}' created!")
+                st.success(f"✅ '{safe}' created!")
                 st.rerun()
 
         st.markdown("---")

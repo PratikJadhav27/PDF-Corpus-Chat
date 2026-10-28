@@ -20,13 +20,18 @@ from typing import Any, Dict, List, Optional
 from src.config import CHUNKING
 from src.ingestion.pdf_loader import load_pdf_pages_with_stats
 from src.ingestion.chunking import chunk_pdf_pages
+from src.rag.collection_names import (
+    VECTOR_STORES_DIR,
+    collection_path,
+    contained_path,
+    resolve_collection_name,
+)
 from src.rag.vector_store import upsert_chunks
 from src.rag.bm25_index import merge_chunk_corpus
 
 import streamlit as st  # only for st.session_state.document_metadata write
 
 
-VECTOR_STORES_DIR = "vector_stores"
 METADATA_DIR = "metadata"
 
 
@@ -45,10 +50,29 @@ def get_collections() -> List[str]:
     ]
 
 
-def delete_collection(collection_name: str) -> bool:
-    """Delete a collection's vector store and metadata directories."""
+def create_collection(collection_name: str) -> str:
+    """Create a collection's store and metadata directories.
+
+    Returns the name that was actually used: it is sanitised to
+    ``[A-Za-z0-9_-]`` (or kept as-is when a legacy directory already exists),
+    so a typed name like ``../etc`` can only ever create ``etc`` inside
+    ``vector_stores`` (ISSUE-010).
+    """
+    safe = resolve_collection_name(collection_name)
     for base in (VECTOR_STORES_DIR, METADATA_DIR):
-        path = os.path.join(base, collection_name)
+        os.makedirs(contained_path(base, safe), exist_ok=True)
+    return safe
+
+
+def delete_collection(collection_name: str) -> bool:
+    """Delete a collection's vector store and metadata directories.
+
+    The name is resolved to a contained path (ISSUE-010), so a name with path
+    separators can never remove anything outside the two collection trees.
+    """
+    safe = resolve_collection_name(collection_name)
+    for base in (VECTOR_STORES_DIR, METADATA_DIR):
+        path = contained_path(base, safe)
         if os.path.exists(path):
             shutil.rmtree(path)
     return True
@@ -56,7 +80,7 @@ def delete_collection(collection_name: str) -> bool:
 
 def load_collection_metadata(collection_name: str) -> Optional[Dict[str, Any]]:
     """Load persisted metadata.json for a collection, or None if missing."""
-    path = os.path.join(METADATA_DIR, collection_name, "metadata.json")
+    path = os.path.join(collection_path(METADATA_DIR, collection_name), "metadata.json")
     if os.path.exists(path):
         with open(path, "r") as f:
             return json.load(f)
@@ -136,7 +160,7 @@ def ingest_chunks_with_stats(
 
     Returns ``{"ok", "store_mode", "metadata", "chunks_ingested"}``.
     """
-    safe_collection = collection_name.strip().replace(" ", "_") or "default"
+    safe_collection = resolve_collection_name(collection_name)
 
     # 1. Vector store (Qdrant) — per-source replace + append
     store_mode = upsert_chunks(safe_collection, chunks, embeddings)
@@ -166,7 +190,7 @@ def ingest_chunks_with_stats(
         },
     }
 
-    meta_dir = os.path.join(METADATA_DIR, safe_collection)
+    meta_dir = contained_path(METADATA_DIR, safe_collection)
     os.makedirs(meta_dir, exist_ok=True)
     with open(os.path.join(meta_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=2)

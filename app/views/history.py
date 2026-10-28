@@ -8,6 +8,7 @@ Semantic Search is independent of the chat log (ISSUE-008): it lists the
 collections that exist on disk, so a session that has not chatted yet — or has
 only chatted in one collection — can still search every indexed collection.
 """
+import html
 import json
 import os
 from datetime import datetime
@@ -112,13 +113,15 @@ def _render_history_panel():
 
         with st.expander(f"{thumb}Q{total-i+1} · {chat['question'][:70]}… {col_label} {lat_str}"):
             # Meta row
+            # Badge values are stored data (a collection name can be anything
+            # already on disk): escape them before they enter the markup.
             st.markdown(
                 f"""
                 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:0.75rem;">
-                    <span class="dm-badge dm-badge-blue">{chat.get('timestamp','')}</span>
-                    <span class="dm-badge dm-badge-violet">{chat.get('collection','default')}</span>
-                    <span class="dm-badge dm-badge-amber">{chat.get('prompt_version') or chat.get('prompt_type') or '—'}</span>
-                    {f'<span class="dm-badge dm-badge-green">{lat_str}</span>' if lat_str else ''}
+                    <span class="dm-badge dm-badge-blue">{html.escape(str(chat.get('timestamp','')))}</span>
+                    <span class="dm-badge dm-badge-violet">{html.escape(str(chat.get('collection','default')))}</span>
+                    <span class="dm-badge dm-badge-amber">{html.escape(str(chat.get('prompt_version') or chat.get('prompt_type') or '—'))}</span>
+                    {f'<span class="dm-badge dm-badge-green">{html.escape(lat_str)}</span>' if lat_str else ''}
                     {fb_badge}
                 </div>
                 """,
@@ -209,21 +212,34 @@ def _render_semantic_search_panel():
                 results = db.similarity_search(s_query, k=k_results)
                 st.success(f"Found {len(results)} chunk(s)")
                 for i, r in enumerate(results, 1):
-                    src  = os.path.basename(r.metadata.get("source", "Unknown"))
-                    page = r.metadata.get("page_number", "?")
                     st.markdown(
-                        f"""
-                        <div class="dm-metric-card" style="margin-bottom:0.75rem;">
-                            <div style="display:flex;justify-content:space-between;
-                                        align-items:center;margin-bottom:0.5rem;">
-                                <span style="font-weight:600;font-size:0.85rem;">
-                                    Result {i} · {src}
-                                </span>
-                                <span class="dm-badge dm-badge-blue">Page {page}</span>
-                            </div>
-                            <div style="font-size:0.78rem;color:var(--text-2);
-                                        line-height:1.6;">{r.page_content[:500]}…</div>
-                        </div>
-                        """,
+                        _search_result_html(
+                            i,
+                            r.metadata.get("source", "Unknown"),
+                            r.metadata.get("page_number", "?"),
+                            r.page_content,
+                        ),
                         unsafe_allow_html=True,
                     )
+
+
+def _search_result_html(index: int, source: str, page, content: str) -> str:
+    """One semantic-search result card.
+
+    The filename, page label and chunk text all originate in the PDF, so each is
+    escaped: a document containing ``<img onerror=…>`` must render as text, not
+    as markup (ISSUE-010).
+    """
+    return (
+        f'<div class="dm-metric-card" style="margin-bottom:0.75rem;">'
+        f'  <div style="display:flex;justify-content:space-between;'
+        f'              align-items:center;margin-bottom:0.5rem;">'
+        f'    <span style="font-weight:600;font-size:0.85rem;">'
+        f'      Result {index} · {html.escape(os.path.basename(str(source)))}'
+        f'    </span>'
+        f'    <span class="dm-badge dm-badge-blue">Page {html.escape(str(page))}</span>'
+        f'  </div>'
+        f'  <div style="font-size:0.78rem;color:var(--text-2);'
+        f'              line-height:1.6;">{html.escape((content or "")[:500])}…</div>'
+        f'</div>'
+    )
