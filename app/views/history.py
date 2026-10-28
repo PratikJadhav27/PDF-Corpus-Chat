@@ -14,6 +14,7 @@ from datetime import datetime
 
 import streamlit as st
 from app.helpers import get_collections
+from app.history_store import feedback_summary, load_feedback
 from src.rag.embeddings import get_embeddings
 from src.rag.vector_store import load_vector_store
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION
@@ -26,7 +27,7 @@ def render_history_tab():
             <div style="font-family:var(--font-display);font-size:1.1rem;font-weight:600;
                         color:var(--text-1);">Conversation History</div>
             <div style="font-size:0.78rem;color:var(--text-3);margin-top:2px;">
-                Session chat log · semantic search · batch Q&amp;A
+                Saved chat log (survives reloads) · semantic search · batch Q&amp;A
             </div>
         </div>
         """,
@@ -43,7 +44,7 @@ def render_history_tab():
 
 
 def _render_history_panel():
-    """Session chat log with collection/keyword filters and exports."""
+    """Saved chat log with collection/keyword filters, feedback and exports."""
     history = st.session_state.get("chat_history", [])
 
     if not history:
@@ -81,12 +82,35 @@ def _render_history_panel():
     total = len(filtered)
     st.caption(f"{total} conversation{'s' if total != 1 else ''} found")
 
+    # Feedback is persisted per turn (ISSUE-009); show the tally so the state of
+    # the log is visible without opening every entry.
+    saved_feedback = load_feedback()
+    counts = feedback_summary(saved_feedback)
+    rated = counts["helpful"] + counts["not_helpful"]
+    if rated:
+        st.caption(
+            f"Feedback · 👍 {counts['helpful']} helpful · "
+            f"👎 {counts['not_helpful']} not helpful · {rated} rated"
+        )
+    else:
+        st.caption(
+            "No feedback yet — rate an answer with 👍/👎 in the Chat tab."
+        )
+
     for i, chat in enumerate(filtered, 1):
         lat = chat.get("latency", {})
         lat_str = f"⚡ {lat.get('total_sec', 0):.2f}s" if lat else ""
         col_label = f"[{chat.get('collection','?')}]" if chat.get("collection") else ""
+        fb = saved_feedback.get(chat.get("id")) if chat.get("id") else None
+        thumb = "👍 " if fb and fb.get("helpful") else "👎 " if fb else ""
+        fb_badge = (
+            '<span class="dm-badge dm-badge-green">👍 Helpful</span>'
+            if fb and fb.get("helpful") else
+            '<span class="dm-badge dm-badge-amber">👎 Not helpful</span>'
+            if fb else ""
+        )
 
-        with st.expander(f"Q{total-i+1} · {chat['question'][:70]}… {col_label} {lat_str}"):
+        with st.expander(f"{thumb}Q{total-i+1} · {chat['question'][:70]}… {col_label} {lat_str}"):
             # Meta row
             st.markdown(
                 f"""
@@ -95,6 +119,7 @@ def _render_history_panel():
                     <span class="dm-badge dm-badge-violet">{chat.get('collection','default')}</span>
                     <span class="dm-badge dm-badge-amber">{chat.get('prompt_version') or chat.get('prompt_type') or '—'}</span>
                     {f'<span class="dm-badge dm-badge-green">{lat_str}</span>' if lat_str else ''}
+                    {fb_badge}
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -116,7 +141,14 @@ def _render_history_panel():
     c1, c2 = st.columns(2)
     with c1:
         exportable = [
-            {k: v for k, v in c.items() if k != "docs"}
+            {
+                **{k: v for k, v in c.items() if k != "docs"},
+                "feedback": (
+                    "helpful" if saved_feedback.get(c.get("id"), {}).get("helpful")
+                    else "not_helpful" if saved_feedback.get(c.get("id"))
+                    else None
+                ),
+            }
             for c in filtered
         ]
         st.download_button(

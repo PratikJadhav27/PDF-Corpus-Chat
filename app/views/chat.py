@@ -11,6 +11,8 @@ UI design: DocMind dark theme.
   - Source cards rendered via per-card st.markdown() (avoids big-HTML Streamlit bug)
   - Latency badge shown on every AI response
   - Advanced settings collapsed in sidebar by default
+  - Chat turns and 👍/👎 feedback are appended to disk (app/history_store.py),
+    so a reload restores the log and the thumbs show their saved verdict
 """
 import os
 import re
@@ -22,6 +24,13 @@ from src.config import CHUNKING
 from src.rag.inference import run_rag_query
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
 from app.helpers import get_collections, process_and_index_pdfs
+from app.history_store import (
+    append_entry,
+    append_feedback,
+    clear_log,
+    load_feedback,
+    new_entry_id,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -396,8 +405,16 @@ def render_sidebar(collections):
         st.markdown("---")
         col_a, col_b = st.columns([3, 2])
         with col_a:
-            if st.button("🗑️ Clear Chat", use_container_width=True):
+            if st.button(
+                "🗑️ Clear Chat",
+                use_container_width=True,
+                help="Clears this session and the saved log on disk",
+            ):
                 st.session_state.chat_history = []
+                try:
+                    clear_log()
+                except OSError as exc:
+                    st.error(f"Could not clear the saved log: {exc}")
                 st.rerun()
         with col_b:
             st.markdown(
@@ -416,13 +433,15 @@ def _render_ai_message(
     docs: list,
     latency: dict,
     question: str,
-    feedback_key: str,
+    entry_id: str,
     prompt_version: str = "",
+    feedback: dict = None,
 ):
     """Render one complete AI response: processed answer + citations + source cards + feedback.
 
-    ``feedback_key`` must be unique per rendered message: the same question can
-    legitimately appear more than once, so it cannot be derived from the text.
+    ``entry_id`` identifies the conversation turn. It must be unique per rendered
+    message (the same question can legitimately appear more than once) and is
+    what the thumbs are persisted against.
     """
     # Process citations → HTML with pills
     processed_html, citation_list = _process_citations(answer, docs or [])
@@ -447,7 +466,16 @@ def _render_ai_message(
         _render_source_cards(docs)
 
     # Feedback row
-    _render_feedback_row(question, feedback_key)
+    _render_feedback_row(entry_id, question, feedback)
+
+
+def _entry_id(entry: dict, idx: int) -> str:
+    """Id used for feedback linkage and widget keys.
+
+    Saved turns carry their own id; rows that exist only in session state fall
+    back to their position, which is stable while history is append-only.
+    """
+    return entry.get("id") or f"hist_{idx}"
 
 
 def render_chat_tab(collections):
@@ -458,7 +486,9 @@ def render_chat_tab(collections):
 
     # ── Render existing conversation history ──────────────────────────────
     history = st.session_state.get("chat_history", [])
+    saved_feedback = load_feedback()
     for idx, entry in enumerate(history):
+        entry_id = _entry_id(entry, idx)
         with st.chat_message("user", avatar="👤"):
             st.markdown(entry["question"])
 
@@ -468,11 +498,11 @@ def render_chat_tab(collections):
                 entry.get("docs", []),
                 entry.get("latency", {}),
                 entry["question"],
-                # Index-based, not content-based: repeated questions are allowed.
-                feedback_key=f"hist_{idx}",
+                entry_id=entry_id,
                 # Entries written before ISSUE-004 only have `prompt_type`;
                 # don't claim a version that was never recorded.
                 prompt_version=entry.get("prompt_version", ""),
+                feedback=saved_feedback.get(entry_id),
             )
 
     # ── Chat input (sticky bottom) ────────────────────────────────────────
@@ -501,19 +531,11 @@ def render_chat_tab(collections):
                 status.update(label="✅ Done", state="complete")
 
             if answer:
-                _render_ai_message(
-                    answer,
-                    docs or [],
-                    latency,
-                    user_question,
-                    # Distinct from every index rendered above; becomes hist_<n>
-                    # on the next run once this entry is in the history.
-                    feedback_key=f"live_{len(history)}",
-                    prompt_version=prompt_version,
-                )
-
-                # Persist to chat history
-                st.session_state.chat_history.append({
+                # Build the turn before rendering it: its id is what the thumbs
+                # below write against and what a reloaded page resolves the
+                # saved verdict from.
+                entry = {
+                    "id": new_entry_id(),
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "question":  user_question,
                     "answer":    answer,
@@ -521,21 +543,62 @@ def render_chat_tab(collections):
                     "docs":      docs or [],
                     "prompt_version": prompt_version,
                     "collection":  selected_collection,
-                })
+                }
+
+                _render_ai_message(
+                    answer,
+                    entry["docs"],
+                    latency,
+                    user_question,
+                    entry_id=entry["id"],
+                    prompt_version=prompt_version,
+                )
+
+                st.session_state.chat_history.append(entry)
+                try:
+                    append_entry(entry)
+                except OSError as exc:
+                    # Losing the log must not lose the answer that already cost
+                    # a model call — surface the failure instead of hiding it.
+                    st.warning(f"⚠️ This turn could not be saved to disk: {exc}")
 
 
-def _render_feedback_row(question: str, entry_key: str):
-    """Compact inline thumbs feedback, keyed by the message's position."""
-    c1, c2, _, _ = st.columns([1, 1, 3, 1])
+def _render_feedback_row(entry_id: str, question: str, feedback: dict = None):
+    """Inline thumbs feedback, persisted per turn; the saved verdict is shown."""
+    helpful = feedback.get("helpful") if feedback else None
+
+    def _record(value: bool) -> None:
+        try:
+            append_feedback(
+                entry_id,
+                value,
+                question=question,
+                collection=st.session_state.get("current_collection", "default"),
+            )
+        except OSError as exc:
+            st.error(f"Could not save your feedback: {exc}")
+            return
+        st.rerun()
+
+    c1, c2, c3 = st.columns([1, 1, 4])
     with c1:
-        if st.button("👍", key=f"up_{entry_key}", help="Helpful"):
-            st.session_state.setdefault("feedback_data", []).append(
-                {"question": question, "helpful": True,
-                 "timestamp": datetime.now().isoformat()}
-            )
+        if st.button(
+            "👍",
+            key=f"up_{entry_id}",
+            help="Helpful",
+            type="primary" if helpful is True else "secondary",
+        ):
+            _record(True)
     with c2:
-        if st.button("👎", key=f"dn_{entry_key}", help="Not helpful"):
-            st.session_state.setdefault("feedback_data", []).append(
-                {"question": question, "helpful": False,
-                 "timestamp": datetime.now().isoformat()}
-            )
+        if st.button(
+            "👎",
+            key=f"dn_{entry_id}",
+            help="Not helpful",
+            type="primary" if helpful is False else "secondary",
+        ):
+            _record(False)
+    with c3:
+        if helpful is True:
+            st.caption("Marked helpful")
+        elif helpful is False:
+            st.caption("Marked not helpful")
