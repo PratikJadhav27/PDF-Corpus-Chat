@@ -283,6 +283,11 @@ ISSUE-011 added call-count assertions (`tests/test_query_overhead.py`) plus a be
 - **Why it matters:** ISSUE-001 made re-ingestion per-source, which is correct, but nothing reconciles a store that predates the fix (or was reset/partially deleted). The UI reports corpus/metadata totals as if they were vector counts.
 - **Suggested fix (needs a decision):** a `doctor`/repair path that counts Qdrant points per source and either re-embeds the missing sources (costs API budget) or reports the drift in the Collections tab, plus storing the embedding model/dimension per collection (SUS-02).
 
+### ISSUE-016 — two cosmetic state leftovers after create/delete (P3, reported not fixed)
+- **Evidence (found in the merged-stack browser pass after the ISSUE-014 merge):** (a) creating a collection renders the Streamlit warning *“The widget with key `sidebar_collection_select` was created with a default value but also had its value set via the Session State API.”* `choose_collection()` writes the three display keys in the `on_click` callback while the selectors still pass `index=` unconditionally ([chat.py:339](app/views/chat.py#L339), [collections.py:85](app/views/collections.py#L85), [history.py:193](app/views/history.py#L193)); (b) after deleting the active collection, `Select collection to delete` keeps displaying the deleted name, so the button reads `Delete 'e2e_merged'` for a collection that no longer exists — `choose_collection()` pops `del_collection`, but a mounted widget re-supplies its front-end value, so the pop does not reset it.
+- **Impact:** cosmetic only. Both wrong-target paths stayed correct in the live pass: create activated the new collection in the badge and all three selectors, and deleting it fell back to a live one with every selector agreeing. `delete_collection()` is idempotent, so a second click on the stale entry silently does nothing.
+- **Suggested fix:** pass `index=` only when the widget key is absent (one helper in `app/state.py`), and at render time reset `del_collection`/`stats_collection` to the first refreshed entry when the stored value is no longer in the list; add an AppTest asserting no warning is emitted and the delete picker drops a removed name.
+
 ---
 
 ## E. Product Enhancement Backlog
@@ -343,4 +348,5 @@ Scoring: 1–5, evidence-based. "Unverified" is used where this audit could not 
 | ISSUE-011 per-query caches | `fix/ISSUE-011-query-overhead` | (this commit) | `tests/test_query_overhead.py` 9 passed; full suite **301 passed**, exit 0; probe before/after (discovery 20→1 calls, client opens 20→0, corpus parses 100,000→0); live ingest + query + UI delete | ✅ Completed 2026-10-29 |
 | ISSUE-014 active-collection state + pill markup | `fix/ISSUE-014-collection-state-and-pills` | (this commit) | `tests/test_collection_selection.py` 5 + `tests/test_citation_pills.py` 6 passed (7 fail on pre-fix app layer); full suite **303 passed**, exit 0; full live-browser pass: upload → ingest → chat with citations → 👍 → reload → history/search/analytics → create → upload into the new collection → delete | ✅ Completed 2026-10-29 |
 | ISSUE-015 corpus/vector drift in `default` | — | — | Reported, not fixed: 37 corpus rows with no vectors, left exactly as found | 📝 Needs decision |
+| ISSUE-016 cosmetic selector state | — | — | Reported, not fixed: one-time warning after create, stale delete picker after delete | 📝 Needs decision |
 | ISSUE-012 … ISSUE-013 | — | — | — | ⛔ Pending |
