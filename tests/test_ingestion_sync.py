@@ -18,7 +18,7 @@ from src.rag.bm25_index import (
     get_chunk_corpus_path,
     load_chunk_corpus,
 )
-from src.rag.vector_store import get_collection_dir, sanitize_collection_name
+from src.rag.vector_store import get_qdrant_client, sanitize_collection_name
 
 
 class FakeEmbeddings(Embeddings):
@@ -70,26 +70,28 @@ def workdir(tmp_path, monkeypatch):
 
 
 def _qdrant_state(collection):
-    """Return (set of metadata.source values, point count) for a collection."""
-    client = QdrantClient(path=get_collection_dir(collection))
-    try:
-        safe = sanitize_collection_name(collection)
-        sources = set()
-        offset = None
-        while True:
-            points, offset = client.scroll(
-                collection_name=safe,
-                limit=256,
-                offset=offset,
-                with_payload=["metadata.source"],
-            )
-            for p in points:
-                sources.add(((p.payload or {}).get("metadata") or {}).get("source"))
-            if offset is None:
-                break
-        count = client.count(collection_name=safe).count
-    finally:
-        client.close()
+    """Return (set of metadata.source values, point count) for a collection.
+
+    Uses the process-wide client (ISSUE-011): local Qdrant allows one client
+    per folder, so opening a second one here would deadlock against the store
+    the ingestion path already holds.
+    """
+    client = get_qdrant_client(collection)
+    safe = sanitize_collection_name(collection)
+    sources = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=safe,
+            limit=256,
+            offset=offset,
+            with_payload=["metadata.source"],
+        )
+        for p in points:
+            sources.add(((p.payload or {}).get("metadata") or {}).get("source"))
+        if offset is None:
+            break
+    count = client.count(collection_name=safe).count
     return sources, count
 
 
