@@ -15,6 +15,8 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from app.history_store import load_feedback
+
 APP_MAIN = Path(__file__).resolve().parents[1] / "app" / "main.py"
 
 ANSWER = "Alpha applies to bravo [a.pdf | page 1]."
@@ -98,12 +100,18 @@ def test_asking_the_same_question_twice_in_a_session(monkeypatch):
 def test_clicking_one_thumb_records_exactly_one_feedback():
     at = _render_with_history([_history_entry("What is alpha?")] * 2)
 
-    _feedback_buttons(at)[0].click()
+    up_buttons = [b for b in _feedback_buttons(at) if b.key.startswith("up_")]
+    up_buttons[0].click()
     at.run()
 
     assert not at.exception, at.exception
 
-    feedback = at.session_state["feedback_data"]
+    # ISSUE-009: the verdict is persisted per turn rather than appended to a
+    # session list nothing read. These seeded rows have no saved id, so they
+    # link by position.
+    feedback = load_feedback()
     assert len(feedback) == 1
-    assert feedback[0]["question"] == "What is alpha?"
-    assert feedback[0]["helpful"] is True
+    [record] = feedback.values()
+    assert record["entry_id"] == "hist_0"
+    assert record["question"] == "What is alpha?"
+    assert record["helpful"] is True
