@@ -5,31 +5,31 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient, models
 
 from src.rag.embeddings import get_embeddings  # centralised embedding factory
+from src.rag.collection_names import (  # single source of truth (ISSUE-010)
+    VECTOR_STORES_DIR,
+    collection_path,
+    resolve_collection_name,
+    sanitize_collection_name,  # re-exported: existing callers import it from here
+)
 
 
 # Base directory for vector stores. Each collection gets its own sub‑directory.
 def get_collection_dir(collection_name: str) -> str:
-    """Return the absolute path for a collection's Qdrant storage.
+    """Return the path for a collection's Qdrant storage.
 
-    The function sanitises the collection name (spaces → underscores) and
-    ensures a directory exists under ``vector_stores``.
+    The name is sanitised to a single ``[A-Za-z0-9_-]`` component (an existing
+    legacy directory keeps its name), so the result is always inside
+    ``vector_stores`` — see ``src.rag.collection_names``.
     """
-    safe = (collection_name or "default").strip().replace(" ", "_")
-    return f"vector_stores/{safe}"
+    return collection_path(VECTOR_STORES_DIR, collection_name)
 
 # Legacy constant kept for backward compatibility – points to the default collection.
 QDRANT_PATH = get_collection_dir("default")
 
 
-def sanitize_collection_name(name: str) -> str:
-    """Replace spaces with underscores and strip unsafe characters."""
-    safe = name.strip().replace(" ", "_")
-    return safe if safe else "default"
-
-
 def load_vector_store(collection_name: str, embeddings) -> Optional[QdrantVectorStore]:
-    safe_name = sanitize_collection_name(collection_name)
-    collection_dir = get_collection_dir(collection_name)
+    safe_name = resolve_collection_name(collection_name)
+    collection_dir = get_collection_dir(safe_name)
 
     if not os.path.exists(collection_dir):
         return None
@@ -57,8 +57,8 @@ def build_vector_store_from_chunks(
 ) -> QdrantVectorStore:
     if embeddings is None:
         embeddings = get_embeddings()
-    safe_name = sanitize_collection_name(collection_name)
-    collection_dir = get_collection_dir(collection_name)
+    safe_name = resolve_collection_name(collection_name)
+    collection_dir = get_collection_dir(safe_name)
 
     texts = [c["text"] for c in chunks]
     metadatas = [c["metadata"] for c in chunks]
@@ -113,7 +113,7 @@ def delete_points_for_sources(
     if not source_list:
         return 0
 
-    safe_name = sanitize_collection_name(collection_name)
+    safe_name = resolve_collection_name(collection_name)
     flt = _source_filter(source_list)
 
     try:
@@ -145,8 +145,8 @@ def upsert_chunks(
     if embeddings is None:
         embeddings = get_embeddings()
 
-    safe_name = sanitize_collection_name(collection_name)
-    collection_dir = get_collection_dir(collection_name)
+    safe_name = resolve_collection_name(collection_name)
+    collection_dir = get_collection_dir(safe_name)
     texts = [c["text"] for c in chunks]
     metadatas = [c["metadata"] for c in chunks]
     sources = {c.get("metadata", {}).get("source") for c in chunks}

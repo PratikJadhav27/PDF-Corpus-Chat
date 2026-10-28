@@ -12,9 +12,10 @@ This tab is the primary place for:
 
 The sidebar also shows upload shortcuts for power users.
 """
-import os
+import html
 import streamlit as st
 from app.helpers import (
+    create_collection,
     get_collections,
     delete_collection,
     load_collection_metadata,
@@ -68,9 +69,7 @@ def render_collections_tab(collections):
         )
         if new_col_name.strip():
             if st.button("＋ Create", key="create_col_main"):
-                safe = new_col_name.strip().replace(" ", "_")
-                os.makedirs(f"vector_stores/{safe}", exist_ok=True)
-                os.makedirs(f"metadata/{safe}", exist_ok=True)
+                safe = create_collection(new_col_name)
                 st.session_state.current_collection = safe
                 st.success(f"Created '{safe}'")
                 st.rerun()
@@ -132,10 +131,11 @@ def render_collections_tab(collections):
         if files:
             st.markdown('<div class="dm-section" style="margin-top:1rem;">📄 Indexed Files</div>', unsafe_allow_html=True)
             for fname in files:
+                # Filenames come from the uploaded PDFs: escape before HTML.
                 st.markdown(
                     f'<div style="background:var(--bg-surface);border:1px solid var(--border);'
                     f'border-radius:8px;padding:8px 14px;margin-bottom:5px;font-size:0.82rem;">'
-                    f'📄 {fname}</div>',
+                    f'📄 {html.escape(str(fname))}</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -156,7 +156,7 @@ def render_collections_tab(collections):
                     st.markdown(
                         f'<div style="background:var(--bg-surface);border:1px solid var(--border);'
                         f'border-radius:8px;padding:8px 14px;margin-bottom:5px;font-size:0.78rem;">'
-                        f'<strong>{fname}</strong>'
+                        f'<strong>{html.escape(str(fname))}</strong>'
                         f'<span style="color:var(--text-3);margin-left:8px;">'
                         f'{ext}/{tot} pages · {rate}% success</span></div>',
                         unsafe_allow_html=True,
