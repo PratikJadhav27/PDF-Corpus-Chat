@@ -23,9 +23,37 @@ from app.helpers import (
     process_and_index_pdfs,
 )
 from src.config import CHUNKING
+from app.state import (
+    choose_collection,
+    current_collection,
+    forget_collection_pickers,
+    sync_collection_from_widget,
+)
+
+
+def _create_collection_callback(name_key: str) -> None:
+    """Create the typed collection and make it active (``on_click``)."""
+    raw = st.session_state.get(name_key, "")
+    if not raw or not raw.strip():
+        return
+    choose_collection(create_collection(raw))
+    st.session_state[name_key] = ""
+
+
+def _delete_collection_callback(name: str) -> None:
+    """Delete a collection and keep the active selection pointing at a live one."""
+    delete_collection(name)
+    if current_collection() == name:
+        remaining = [c for c in get_collections() if c != name]
+        choose_collection(remaining[0] if remaining else "default")
+    else:
+        forget_collection_pickers()
 
 
 def render_collections_tab(collections):
+    # This tab is rendered on every run (st.tabs builds all children), so its
+    # "Target Collection" selectbox must never write the active collection on
+    # its own: a stale widget value would overwrite the sidebar's choice.
     st.markdown(
         """
         <div class="dm-page-header">
@@ -53,14 +81,15 @@ def render_collections_tab(collections):
     with settings_col:
         # Collection target selector
         all_cols = get_collections() or ["default"]
+        current = current_collection()
         target_col = st.selectbox(
             "Target Collection",
             all_cols,
-            index=all_cols.index(st.session_state.get("current_collection", "default"))
-            if st.session_state.get("current_collection", "default") in all_cols else 0,
+            index=all_cols.index(current) if current in all_cols else 0,
             key="upload_target_col",
+            on_change=sync_collection_from_widget,
+            args=("upload_target_col",),
         )
-        st.session_state.current_collection = target_col
         st.caption(f"Chunk {CHUNKING.chunk_size} · Overlap {CHUNKING.chunk_overlap}")
         new_col_name = st.text_input(
             "Or create new collection",
@@ -68,11 +97,12 @@ def render_collections_tab(collections):
             key="new_col_name_main",
         )
         if new_col_name.strip():
-            if st.button("＋ Create", key="create_col_main"):
-                safe = create_collection(new_col_name)
-                st.session_state.current_collection = safe
-                st.success(f"Created '{safe}'")
-                st.rerun()
+            st.button(
+                "＋ Create",
+                key="create_col_main",
+                on_click=_create_collection_callback,
+                args=("new_col_name_main",),
+            )
 
     if st.button("🚀 Submit & Process", type="primary", use_container_width=True, key="main_process_btn"):
         if not pdf_docs:
@@ -89,7 +119,6 @@ def render_collections_tab(collections):
                     rc1.metric("Pages", stats.get("total_pages", 0))
                     rc2.metric("Extracted", stats.get("extracted_pages", 0))
                     rc3.metric("Failed", stats.get("failed_pages", 0))
-                    st.session_state.current_collection = target_col
                     st.rerun()
                 else:
                     s.update(label="❌ Indexing failed", state="error")
@@ -175,10 +204,13 @@ def render_collections_tab(collections):
             "Select collection to delete", refreshed, key="del_collection"
         )
         st.warning(f"This will permanently delete **{col_to_delete}** and all its indexed data.")
-        if st.button(f"🗑️ Delete '{col_to_delete}'", type="primary", key="delete_col_btn"):
-            delete_collection(col_to_delete)
-            st.success(f"Deleted '{col_to_delete}'")
-            st.rerun()
+        st.button(
+            f"🗑️ Delete '{col_to_delete}'",
+            type="primary",
+            key="delete_col_btn",
+            on_click=_delete_collection_callback,
+            args=(col_to_delete,),
+        )
 
 
 def render_stats_tab(collections):

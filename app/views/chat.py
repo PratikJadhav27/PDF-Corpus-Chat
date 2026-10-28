@@ -25,6 +25,12 @@ from src.config import CHUNKING
 from src.rag.inference import run_rag_query
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
 from app.helpers import create_collection, get_collections, process_and_index_pdfs
+from app.state import (
+    choose_collection,
+    current_collection,
+    set_current_collection,
+    sync_collection_from_widget,
+)
 from app.history_store import (
     append_entry,
     append_feedback,
@@ -32,6 +38,20 @@ from app.history_store import (
     load_feedback,
     new_entry_id,
 )
+
+
+def _create_collection_callback(name_key: str) -> None:
+    """Create the typed collection and make it active (``on_click``).
+
+    Runs before the widgets of the new run are created, which is the only place
+    Streamlit lets widget state be assigned, so the selectors pick the new
+    collection up immediately instead of keeping the previous value.
+    """
+    raw = st.session_state.get(name_key, "")
+    if not raw or not raw.strip():
+        return
+    choose_collection(create_collection(raw))
+    st.session_state[name_key] = ""
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +117,11 @@ def _process_citations(answer: str, docs: list) -> tuple:
         # Filenames and excerpts come from documents (and the answer): escape
         # the whole tooltip so it cannot close the attribute it lives in.
         tooltip = html.escape(tooltip, quote=True)
+        # The pill is injected into an HTML block that is later split into
+        # paragraphs on blank lines. A real "\n\n" here would cut the tag in
+        # half and the tooltip would leak into the answer as text, so newlines
+        # travel as entities and are decoded by the browser.
+        tooltip = tooltip.replace("\r", "").replace("\n", "&#10;")
 
         return (
             f'<sup><span class="dm-cite-pill" data-tooltip="{tooltip}">'
@@ -293,8 +318,16 @@ def render_sidebar(collections):
             unsafe_allow_html=True,
         )
 
-        # Active collection badge
-        current = st.session_state.get("current_collection", "default")
+        # Active collection: resolve a name that is missing on disk (deleted
+        # elsewhere, or a fresh session whose `default` was never created)
+        # before anything renders it, so the badge, the selector and the query
+        # path can never disagree.
+        current = current_collection()
+        updated_collections = get_collections() or ["default"]
+        if current not in updated_collections:
+            current = updated_collections[0]
+            set_current_collection(current)
+
         st.markdown(
             f'<div class="collection-badge"><div class="dot"></div>'
             f'{html.escape(str(current))}</div>',
@@ -303,16 +336,16 @@ def render_sidebar(collections):
 
         # Collection selector
         st.markdown('<div class="sidebar-label">Collection</div>', unsafe_allow_html=True)
-        updated_collections = get_collections() or ["default"]
-        selected = st.selectbox(
+        st.selectbox(
             "Active Collection",
             updated_collections,
             index=updated_collections.index(current)
             if current in updated_collections else 0,
             key="sidebar_collection_select",
             label_visibility="collapsed",
+            on_change=sync_collection_from_widget,
+            args=("sidebar_collection_select",),
         )
-        st.session_state.current_collection = selected
 
         # New collection
         new_col = st.text_input(
@@ -322,11 +355,13 @@ def render_sidebar(collections):
             label_visibility="collapsed",
         )
         if new_col and new_col.strip():
-            if st.button("＋ Create Collection", key="create_collection_btn", use_container_width=True):
-                safe = create_collection(new_col)
-                st.session_state.current_collection = safe
-                st.success(f"✅ '{safe}' created!")
-                st.rerun()
+            st.button(
+                "＋ Create Collection",
+                key="create_collection_btn",
+                use_container_width=True,
+                on_click=_create_collection_callback,
+                args=("new_collection_input",),
+            )
 
         st.markdown("---")
 
@@ -344,11 +379,10 @@ def render_sidebar(collections):
             if pdf_docs:
                 with st.status("Indexing PDFs…", expanded=True) as s:
                     st.write("Extracting text & chunking…")
-                    result = process_and_index_pdfs(pdf_docs, st.session_state.current_collection)
+                    result = process_and_index_pdfs(pdf_docs, current_collection())
                     st.write("Building vector index & BM25…")
                     if result["ok"]:
                         s.update(label="✅ Indexed successfully", state="complete")
-                        st.session_state.current_collection = st.session_state.current_collection
                         st.rerun()
                     else:
                         s.update(label="❌ Failed", state="error")
@@ -480,7 +514,7 @@ def _entry_id(entry: dict, idx: int) -> str:
 
 
 def render_chat_tab(collections):
-    selected_collection = st.session_state.get("current_collection", "default")
+    selected_collection = current_collection()
 
     # Index status bar
     st.markdown(_index_status_html(selected_collection), unsafe_allow_html=True)
