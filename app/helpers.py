@@ -26,8 +26,8 @@ from src.rag.collection_names import (
     contained_path,
     resolve_collection_name,
 )
-from src.rag.vector_store import upsert_chunks
-from src.rag.bm25_index import merge_chunk_corpus
+from src.rag.vector_store import evict_qdrant_client, upsert_chunks
+from src.rag.bm25_index import forget_corpus_cache, merge_chunk_corpus
 
 import streamlit as st  # only for st.session_state.document_metadata write
 
@@ -71,6 +71,10 @@ def delete_collection(collection_name: str) -> bool:
     separators can never remove anything outside the two collection trees.
     """
     safe = resolve_collection_name(collection_name)
+    # Close the shared Qdrant client first: a local-mode client keeps the
+    # storage SQLite file open, which blocks removal on Windows.
+    evict_qdrant_client(safe)
+    forget_corpus_cache(safe)
     for base in (VECTOR_STORES_DIR, METADATA_DIR):
         path = contained_path(base, safe)
         if os.path.exists(path):

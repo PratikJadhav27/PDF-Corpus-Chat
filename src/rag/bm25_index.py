@@ -29,6 +29,14 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 # In-memory cache: collection_name -> SimpleBM25 instance
 _INDEX_CACHE: Dict[str, "SimpleBM25"] = {}
 
+# In-memory cache: collection_name -> (corpus mtime, rows)
+#
+# Searching used to re-parse the whole JSONL corpus on every query just to map
+# hit indexes back to metadata (ISSUE-011). Rows are cached and revalidated
+# against the file's mtime, so an external rewrite (another process, a script)
+# is still picked up.
+_CORPUS_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -122,22 +130,41 @@ def save_chunk_corpus(collection_name: str, chunks: List[Dict[str, Any]]) -> Non
     os.makedirs(dir_path, exist_ok=True)
 
     # 1. Write JSONL corpus (text + metadata for post-hit lookup)
-    corpus_path = get_chunk_corpus_path(collection_name)
-    with open(corpus_path, "w", encoding="utf-8") as f:
-        for c in chunks:
-            row = {"text": c.get("text", ""), "metadata": c.get("metadata", {})}
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    rows = [
+        {"text": c.get("text", ""), "metadata": c.get("metadata", {})}
+        for c in chunks
+    ]
+    _write_chunk_corpus_rows(collection_name, rows)
 
     # 2. Build BM25 index from the corpus and persist it
     texts = [c.get("text", "") for c in chunks]
     save_bm25_index(collection_name, texts)
 
 
-def load_chunk_corpus(collection_name: str) -> List[Dict[str, Any]]:
-    """Load raw chunks from the JSONL corpus file."""
+def load_chunk_corpus(
+    collection_name: str,
+    use_cache: bool = True,
+) -> List[Dict[str, Any]]:
+    """Load raw chunks from the JSONL corpus file.
+
+    Results are memoised per collection and revalidated with the file mtime, so
+    repeated queries do not re-parse the corpus while an external rewrite is
+    still noticed. Treat the returned list as read-only.
+    """
     path = get_chunk_corpus_path(collection_name)
     if not os.path.exists(path):
+        _CORPUS_CACHE.pop(collection_name, None)
         return []
+
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+
+    if use_cache and mtime is not None:
+        cached = _CORPUS_CACHE.get(collection_name)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
 
     rows: List[Dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as f:
@@ -149,7 +176,18 @@ def load_chunk_corpus(collection_name: str) -> List[Dict[str, Any]]:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
+
+    if mtime is not None:
+        _CORPUS_CACHE[collection_name] = (mtime, rows)
     return rows
+
+
+def forget_corpus_cache(collection_name: Optional[str] = None) -> None:
+    """Drop cached corpus rows (one collection, or all when omitted)."""
+    if collection_name is None:
+        _CORPUS_CACHE.clear()
+    else:
+        _CORPUS_CACHE.pop(collection_name, None)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +258,8 @@ def bm25_search_collection(
         index = SimpleBM25(texts)
         _INDEX_CACHE[collection_name] = index
 
-    # We still need the corpus for metadata lookup after hits
+    # We still need the corpus for metadata lookup after hits (cached: parsing
+    # the whole JSONL on every query was the per-query cost this fixes).
     corpus = load_chunk_corpus(collection_name)
     if not corpus:
         return []
@@ -242,12 +281,17 @@ def bm25_search_collection(
 # ---------------------------------------------------------------------------
 
 def _write_chunk_corpus_rows(collection_name: str, rows: List[Dict[str, Any]]) -> None:
-    """Overwrite the JSONL corpus file with the given rows."""
+    """Overwrite the JSONL corpus file with the given rows and refresh the cache."""
     os.makedirs(_collection_dir(collection_name), exist_ok=True)
     corpus_path = get_chunk_corpus_path(collection_name)
     with open(corpus_path, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    try:
+        _CORPUS_CACHE[collection_name] = (os.path.getmtime(corpus_path), rows)
+    except OSError:
+        _CORPUS_CACHE.pop(collection_name, None)
 
 
 def merge_chunk_corpus(

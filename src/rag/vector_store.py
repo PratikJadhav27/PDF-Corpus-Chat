@@ -1,5 +1,5 @@
 import os
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Any, Optional
 
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient, models
@@ -27,6 +27,59 @@ def get_collection_dir(collection_name: str) -> str:
 QDRANT_PATH = get_collection_dir("default")
 
 
+# ---------------------------------------------------------------------------
+# Process-wide client cache (ISSUE-011)
+#
+# Local-mode Qdrant opens the storage folder and takes an EXCLUSIVE lock on it,
+# released only when the client is closed. Opening a fresh client per query was
+# a fixed latency tax and a latent `RuntimeError: Storage folder ... already
+# accessed` whenever two parts of a run overlapped. One client per collection
+# path is shared for the life of the process and closed explicitly by
+# `evict_qdrant_client()` (called when a collection is deleted).
+# ---------------------------------------------------------------------------
+
+_CLIENTS: Dict[str, QdrantClient] = {}
+
+
+def _client_key(collection_name: str) -> str:
+    return os.path.abspath(get_collection_dir(collection_name))
+
+
+def get_qdrant_client(collection_name: str) -> QdrantClient:
+    """Return the shared client for a collection's storage folder."""
+    key = _client_key(collection_name)
+    client = _CLIENTS.get(key)
+    if client is None:
+        client = QdrantClient(path=key)
+        _CLIENTS[key] = client
+    return client
+
+
+def evict_qdrant_client(collection_name: str) -> None:
+    """Close and forget the cached client for a collection.
+
+    Required before deleting the storage folder: on Windows the open SQLite
+    file cannot be removed while a client still holds it.
+    """
+    client = _CLIENTS.pop(_client_key(collection_name), None)
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def close_all_qdrant_clients() -> None:
+    """Close every cached client (test isolation / process shutdown)."""
+    for key in list(_CLIENTS):
+        client = _CLIENTS.pop(key, None)
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
 def load_vector_store(collection_name: str, embeddings) -> Optional[QdrantVectorStore]:
     safe_name = resolve_collection_name(collection_name)
     collection_dir = get_collection_dir(safe_name)
@@ -34,11 +87,10 @@ def load_vector_store(collection_name: str, embeddings) -> Optional[QdrantVector
     if not os.path.exists(collection_dir):
         return None
 
-    client = QdrantClient(path=collection_dir)
+    client = get_qdrant_client(safe_name)
 
     try:
-        collections = client.get_collections().collections
-        if not any(c.name == safe_name for c in collections):
+        if not client.collection_exists(safe_name):
             return None
     except Exception:
         return None
@@ -65,13 +117,31 @@ def build_vector_store_from_chunks(
 
     os.makedirs(collection_dir, exist_ok=True)
 
-    return QdrantVectorStore.from_texts(
-        texts=texts,
-        embedding=embeddings,
-        metadatas=metadatas,
-        path=collection_dir,
+    # Create through the shared client rather than `from_texts(path=...)`, which
+    # would open a second local client on the same folder and keep its exclusive
+    # lock alive as long as the returned store object lives.
+    client = get_qdrant_client(safe_name)
+    if not client.collection_exists(safe_name):
+        probe_text = texts[0] if texts else "dummy_text"
+        dimension = len(embeddings.embed_documents([probe_text])[0])
+        client.create_collection(
+            collection_name=safe_name,
+            vectors_config={
+                QdrantVectorStore.VECTOR_NAME: models.VectorParams(
+                    size=dimension,
+                    distance=models.Distance.COSINE,
+                )
+            },
+        )
+
+    store = QdrantVectorStore(
+        client=client,
         collection_name=safe_name,
+        embedding=embeddings,
     )
+    if texts:
+        store.add_texts(texts=texts, metadatas=metadatas)
+    return store
 
 
 # ---------------------------------------------------------------------------
@@ -156,28 +226,23 @@ def upsert_chunks(
         build_vector_store_from_chunks(chunks, collection_name, embeddings)
         return "created"
 
-    # Probe whether the collection itself exists. The probe client is closed
-    # immediately so the write client below can take the local-mode lock.
-    probe = QdrantClient(path=collection_dir)
+    client = get_qdrant_client(safe_name)
     try:
-        existing = [c.name for c in probe.get_collections().collections]
-    finally:
-        probe.close()
+        exists = client.collection_exists(safe_name)
+    except Exception:
+        exists = False
 
-    if safe_name not in existing:
+    if not exists:
         build_vector_store_from_chunks(chunks, collection_name, embeddings)
         return "created"
 
-    client = QdrantClient(path=collection_dir)
-    try:
-        delete_points_for_sources(client, safe_name, sources)
-        store = QdrantVectorStore(
-            client=client,
-            collection_name=safe_name,
-            embedding=embeddings,
-        )
+    delete_points_for_sources(client, safe_name, sources)
+    store = QdrantVectorStore(
+        client=client,
+        collection_name=safe_name,
+        embedding=embeddings,
+    )
+    if texts:
         store.add_texts(texts=texts, metadatas=metadatas)
-    finally:
-        client.close()
 
     return "appended"
