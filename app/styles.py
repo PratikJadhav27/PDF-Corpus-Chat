@@ -757,7 +757,9 @@ hr { border-color: var(--border) !important; }
     color: #E2E8F0;
     width: max-content;
     max-width: 260px;
-    white-space: normal;
+    /* pre-line keeps the newline between the source line and its excerpt
+       (encoded as &#10; in the attribute) while still wrapping long text. */
+    white-space: pre-line;
     line-height: 1.5;
     opacity: 0;
     pointer-events: none;
