@@ -16,7 +16,7 @@ from datetime import datetime
 import streamlit as st
 from app.helpers import get_collections
 from app.history_store import feedback_summary, load_feedback
-from app.state import current_collection, sync_collection_from_widget
+from app.state import collection_selector, sync_collection_from_widget
 from src.rag.embeddings import get_embeddings
 from src.rag.vector_store import load_vector_store
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION
@@ -186,15 +186,12 @@ def _render_semantic_search_panel():
         st.info("No collections yet — upload PDFs in the Collections tab to build one.")
         return
 
-    current = current_collection()
-
     col_c, col_k = st.columns([3, 1])
     with col_c:
-        s_collection = st.selectbox(
+        s_collection = collection_selector(
             "Collection",
             collections,
-            index=collections.index(current) if current in collections else 0,
-            key="search_collection",
+            "search_collection",
             on_change=sync_collection_from_widget,
             args=("search_collection",),
         )
