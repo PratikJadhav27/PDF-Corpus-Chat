@@ -18,6 +18,7 @@ from src.rag.vector_store import load_vector_store
 from src.rag.retriever import retrieve_docs, retrieve_hybrid_reranked
 from src.rag.prompting import build_context_with_citations, build_grounded_prompt
 from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS, resolve_prompt_version
+from src.rag.usage import accumulate_usage, usage_from_message
 from src.rag.validators import guard_answer_with_citation_check, citation_validity
 from src.observability.langfuse_guard import observe, CallbackHandler, langfuse_flush
 from src.observability.tracing import (
@@ -153,7 +154,11 @@ def run_rag_query(
     t_l0 = time.time()
     try:
         langfuse_handler = CallbackHandler()
-        response = model.invoke(prompt, config={"callbacks": [langfuse_handler]}).content
+        # Keep the whole message: the text is the answer, ``usage_metadata`` is
+        # the only place the provider reports what the call actually cost.
+        reply = model.invoke(prompt, config={"callbacks": [langfuse_handler]})
+        response = reply.content
+        usage = usage_from_message(reply)
     except Exception as e:
         append_rag_trace(
             build_trace_record(
@@ -188,6 +193,10 @@ def run_rag_query(
         st.error(f"Model error: {e}")
         return None, None, _NO_LATENCY
     llm_sec = round(time.time() - t_l0, 4)
+
+    # ISSUE-013: record the billable tokens before the answer is post-processed,
+    # so the session's Usage & Cost panel reflects calls that really happened.
+    accumulate_usage(st.session_state, usage)
 
     response = guard_answer_with_citation_check(response, docs, min_validity_ratio=0.8)
     citation_stats = citation_validity(response, docs)
