@@ -27,6 +27,7 @@ from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION, PROMPTS
 from app.helpers import create_collection, get_collections, process_and_index_pdfs
 from app.state import (
     choose_collection,
+    collection_selector,
     current_collection,
     set_current_collection,
     sync_collection_from_widget,
@@ -336,12 +337,10 @@ def render_sidebar(collections):
 
         # Collection selector
         st.markdown('<div class="sidebar-label">Collection</div>', unsafe_allow_html=True)
-        st.selectbox(
+        collection_selector(
             "Active Collection",
             updated_collections,
-            index=updated_collections.index(current)
-            if current in updated_collections else 0,
-            key="sidebar_collection_select",
+            "sidebar_collection_select",
             label_visibility="collapsed",
             on_change=sync_collection_from_widget,
             args=("sidebar_collection_select",),

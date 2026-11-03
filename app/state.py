@@ -16,6 +16,11 @@ before the widget is created. Writing ``current_collection`` alone is not
 enough: a selectbox ignores ``index=`` once its key holds a value, so the stale
 selection would win on the next run and every later upload would land in the
 wrong collection.
+
+For the same reason the selectors are created through ``collection_selector()``:
+handing a default (``index=``) to a widget that already carries a value set by a
+callback makes Streamlit warn on screen, and leaves two things claiming to be
+the selection.
 """
 import streamlit as st
 from app.history_store import load_entries
@@ -24,7 +29,9 @@ from src.rag.prompt_registry import DEFAULT_PROMPT_VERSION
 
 _ACTIVE_COLLECTION_KEY = "current_collection"
 
-# Selectors whose displayed value must follow the active collection.
+# Selectors whose displayed value must follow the active collection. They are
+# rendered through ``collection_selector()`` so the widget's default (``index=``)
+# never competes with the value a callback has already set.
 _DISPLAY_WIDGET_KEYS = (
     "sidebar_collection_select",
     "upload_target_col",
@@ -55,19 +62,29 @@ def choose_collection(name: str) -> None:
     created in the run.
     """
     set_current_collection(name)
-    for key in _DISPLAY_WIDGET_KEYS:
-        st.session_state[key] = current_collection()
-    for key in _LIST_WIDGET_KEYS:
-        st.session_state.pop(key, None)
+    _seed_widgets(_DISPLAY_WIDGET_KEYS + _LIST_WIDGET_KEYS)
 
 
 def forget_collection_pickers() -> None:
-    """Drop the inspect/delete pickers so they re-seed from the current list.
+    """Point the inspect/delete pickers at the live active collection.
 
     Only valid from a callback (before those widgets are created in the run).
     """
-    for key in _LIST_WIDGET_KEYS:
-        st.session_state.pop(key, None)
+    _seed_widgets(_LIST_WIDGET_KEYS)
+
+
+def _seed_widgets(keys) -> None:
+    """Give each widget key a live collection name.
+
+    Assigning (not removing) is what keeps the browser in step: dropping a
+    widget's state leaves the rendered element still showing the old value
+    while the server has already re-created the widget from ``index=0`` — the
+    picker then displayed a collection that had just been deleted. A valid
+    value means the element and the value never disagree.
+    """
+    active = current_collection()
+    for key in keys:
+        st.session_state[key] = active
 
 
 def sync_collection_from_widget(widget_key: str) -> None:
@@ -75,6 +92,31 @@ def sync_collection_from_widget(widget_key: str) -> None:
     value = st.session_state.get(widget_key)
     if isinstance(value, str) and value:
         st.session_state[_ACTIVE_COLLECTION_KEY] = value
+
+
+def collection_selector(label: str, options, key: str, **kwargs) -> str:
+    """Render a collection selectbox whose stored value is the source of truth.
+
+    ``index=`` is a *default*, not a binding: passing it on a run where the key
+    already holds a value set through the Session State API — which is how
+    ``choose_collection()`` switches collections from a callback — makes
+    Streamlit render a warning box ("The widget with key … was created with a
+    default value but also had its value set via the Session State API"). It
+    shows once per server process, on the create that follows an earlier
+    create or switch. A default and an explicit value cannot both be
+    authoritative, so the default is supplied only on the render that has no
+    stored value to honour.
+
+    A stored value that is no longer among ``options`` (the collection was
+    removed in another session) is dropped and re-seeded from the active
+    collection, rather than leaving a name behind that nothing can select.
+    """
+    choices = list(options) or ["default"]
+    if st.session_state.get(key) not in choices:
+        st.session_state.pop(key, None)
+        active = current_collection()
+        kwargs["index"] = choices.index(active) if active in choices else 0
+    return st.selectbox(label, choices, key=key, **kwargs)
 
 
 def init_session_state() -> None:

@@ -25,6 +25,7 @@ from app.helpers import (
 from src.config import CHUNKING
 from app.state import (
     choose_collection,
+    collection_selector,
     current_collection,
     forget_collection_pickers,
     sync_collection_from_widget,
@@ -81,12 +82,10 @@ def render_collections_tab(collections):
     with settings_col:
         # Collection target selector
         all_cols = get_collections() or ["default"]
-        current = current_collection()
-        target_col = st.selectbox(
+        target_col = collection_selector(
             "Target Collection",
             all_cols,
-            index=all_cols.index(current) if current in all_cols else 0,
-            key="upload_target_col",
+            "upload_target_col",
             on_change=sync_collection_from_widget,
             args=("upload_target_col",),
         )
