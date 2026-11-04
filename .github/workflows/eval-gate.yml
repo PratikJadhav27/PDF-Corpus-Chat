@@ -53,10 +53,9 @@ jobs:
       # -----------------------------------------------------------------
       - name: Run unit tests
         run: |
-          pytest tests/test_fusion.py tests/test_validators.py tests/test_retriever.py \
-            tests/test_smoke.py tests/test_reranker.py tests/test_retrieval_metrics.py \
-            tests/test_langfuse_guard.py \
-            -v --tb=short
+          # The whole suite: AppTest regressions are worthless to CI if their
+          # files are not listed here. None of these tests need an API key.
+          pytest tests/ -v --tb=short
 
       # -----------------------------------------------------------------
       # Ingest CI collection from sample PDF fixture (if present)

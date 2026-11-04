@@ -27,7 +27,7 @@ Built with a focus on measurable retrieval quality: hybrid BM25 + Qdrant vector 
 - 🗂️ Create and manage **Collections** (separate knowledge bases per topic/use-case)
 - 💾 Persistent **Qdrant vector store** per collection (local embedded, auto-persisted)
 - 🔍 **Hybrid retrieval**: BM25 keyword search + semantic vector search fused via **Reciprocal Rank Fusion (RRF)**
-- 🎯 **Lexical reranking** — retrieved candidates re-scored by token-overlap combined with RRF score
+- 🎯 **Cross-encoder reranking** — top RRF candidates re-scored by `ms-marco-MiniLM-L-6-v2`, with a token-overlap fallback when the model is unavailable
 - 📌 **Versioned prompt templates** with strict citation enforcement
 - ✅ **Citation validation + guarded fallback** — citations are verified against retrieved source/page pairs before the answer is returned
 - 🕵️ **Observability tracing** via [Langfuse](https://langfuse.com) — every request produces a structured trace with latency, scores, and prompt info; local JSONL sink available as fallback
@@ -43,7 +43,7 @@ Layer 1 — Ingestion:    PDFs → Parser → Chunker → Embedder → Qdrant + 
 Layer 2 — Retrieval:    Query → BM25 + Vector → RRF Fusion → CrossEncoder Reranker → Top-K
 Layer 3 — Generation:   Top-K chunks → Versioned prompt → Gemini LLM → Citation-validated answer
 Layer 4 — Observability: Langfuse trace per request (latency, scores, model, prompt version)
-Layer 5 — Evaluation:   Deterministic Recall@5 gate + DSPy LLM-as-judge CI gate
+Layer 5 — Evaluation:   Recall@5 benchmark + DSPy LLM-as-judge CI gate
 ```
 
 ---
@@ -69,7 +69,13 @@ Layer 5 — Evaluation:   Deterministic Recall@5 gate + DSPy LLM-as-judge CI gat
 ```text
 PDF-Corpus-Chat/
 ├── app/
-│   └── main.py                    # Streamlit entry point
+│   ├── main.py                    # Streamlit entry point (4-tab shell)
+│   ├── state.py                   # Session defaults + active-collection state
+│   ├── helpers.py                 # Ingestion + collection CRUD
+│   ├── analytics.py               # Analytics tab aggregation
+│   ├── history_store.py           # JSONL chat-history + feedback persistence
+│   ├── styles.py                  # Design system CSS
+│   └── views/                     # chat, collections, history, evaluation tabs
 ├── src/
 │   ├── config.py                  # Chunking, retrieval, observability config
 │   ├── ingestion/
@@ -82,44 +88,37 @@ PDF-Corpus-Chat/
 │   │   ├── reranker.py            # ms-marco-MiniLM-L-6-v2 CrossEncoder (singleton)
 │   │   ├── retriever.py           # Hybrid + standard retrieval
 │   │   ├── vector_store.py        # Qdrant persistence helpers
+│   │   ├── collection_names.py    # Single authority for collection-name validation
+│   │   ├── inference.py           # Retrieval + generation pipeline
+│   │   ├── usage.py               # Token accounting for the Usage & Cost panel
 │   │   ├── prompt_registry.py     # Versioned prompt templates
 │   │   ├── prompting.py           # Context + prompt builder
 │   │   └── validators.py          # Citation validation + guard fallback
 │   ├── eval/
 │   │   ├── evaluator.py           # Heuristic + LLM-judge evaluation
 │   │   ├── metrics.py             # DSPy signatures: faithfulness, relevance, completeness
+│   │   ├── entailment.py          # Entailment-style grounding checks
 │   │   └── retrieval_metrics.py   # Recall@K, Precision@K, MRR, nDCG@K, P50/P95
 │   ├── observability/
 │   │   ├── tracing.py             # Structured trace record builder
-│   │   └── store.py               # JSONL append sink
+│   │   ├── store.py               # JSONL append sink
+│   │   └── langfuse_guard.py      # Optional Langfuse wiring with no-op fallback
 │   └── utils/
-├── evals/
-│   ├── golden_dataset.jsonl       # Golden Q&A pairs for CI evaluation
-│   ├── fixtures/                  # Small PDFs for CI ingestion
-│   └── reports/                   # Auto-generated eval reports
-├── scripts/
-│   ├── run_eval.py                # CLI batch evaluation runner
-│   ├── benchmark_retrieval.py     # Retrieval strategy benchmark (Recall@K, MRR, nDCG)
-│   ├── download_fixtures.py       # Downloads arXiv PDFs for CI fixture collection
-│   ├── setup.ps1
-│   └── run.ps1
-├── tests/
-│   ├── test_fusion.py
-│   ├── test_validators.py
-│   ├── test_retriever.py
-│   ├── test_smoke.py
-│   ├── test_reranker.py
-│   └── test_retrieval_metrics.py
+│       └── json_export.py
 ├── evals/
 │   ├── golden_dataset.jsonl       # 50 verified Q&A pairs (6 categories)
+│   ├── golden_dataset.jsonl.template
 │   ├── baselines/latest.json      # Latest retrieval benchmark results
-│   ├── fixtures/                  # PDF fixtures for CI ingestion
+│   ├── fixtures/                  # PDF fixtures — downloaded, not committed
 │   └── reports/                   # Auto-generated eval reports
+├── scripts/                       # run_eval, benchmark_retrieval, download_fixtures, setup/run
+├── tests/                         # pytest suite, incl. Streamlit AppTest coverage
 ├── .github/workflows/
-│   └── eval-gate.yml              # CI regression gate
+│   └── eval-gate.yml              # CI: full test suite + eval gate
 ├── conftest.py
 ├── requirements.txt
-└── docker-compose.yml
+├── docker-compose.yml
+└── license.txt
 ```
 
 ---
@@ -247,19 +246,15 @@ python scripts/benchmark_retrieval.py \
   --top-k 5
 ```
 
-Sample output (values from CI run on arXiv fixture PDFs):
+The script prints a Markdown table (Recall@5, Precision@5, MRR, nDCG@5, P50/P95
+latency per strategy) and writes the same numbers to `evals/baselines/latest.json`.
+No benchmark numbers are quoted in this README: the committed baseline is the
+schema placeholder (`_generated_at: null`) until a fixtures-backed run replaces it.
 
-| Strategy       | Recall@5 | Precision@5 | MRR    | nDCG@5  | P50 (s) | P95 (s) |
-|----------------|----------|-------------|--------|---------|---------|---------|
-| similarity     | —        | —           | —      | —       | —       | —       |
-| mmr            | —        | —           | —      | —       | —       | —       |
-| bm25           | —        | —           | —      | —       | —       | —       |
-| hybrid         | —        | —           | —      | —       | —       | —       |
-
-> Numbers will be filled in on the first CI run with fixture PDFs. The baseline is saved to
-> `evals/baselines/latest.json` and tracked in version control.
-
-**CI gate:** Recall@5 of the best strategy must be ≥ 0.50 or the workflow fails.
+**CI gate:** the best strategy's Recall@5 target is 0.50. The workflow runs the
+benchmark and reports a miss as a failed step, but that step is marked
+`continue-on-error` so a transient Google API 503/429 cannot wedge an unrelated PR;
+the authoritative gate is the eval step above.
 
 ---
 
@@ -267,20 +262,21 @@ Sample output (values from CI run on arXiv fixture PDFs):
 
 The GitHub Actions workflow (`.github/workflows/eval-gate.yml`) runs on every PR:
 
-1. **Unit tests** — `tests/test_fusion.py`, `tests/test_validators.py`, `tests/test_retriever.py`, `tests/test_smoke.py`
-2. **Eval gate** — if `evals/fixtures/*.pdf` exists, ingests and evaluates against `evals/golden_dataset.jsonl`
+1. **Test suite** — `pytest tests/`, the whole suite including the Streamlit `AppTest` tests; none of it needs an API key
+2. **Eval gate** — fetches the fixture PDFs, ingests them, and evaluates against `evals/golden_dataset.jsonl`
 3. **Artifacts** — eval report uploaded to GitHub for post-merge debugging
 
 **PR is blocked if:**
-- Any unit test fails
+- Any test fails
 - `avg_faithfulness < 0.85`
-- `avg_citation_validity_ratio < 0.65`
-- Best `Recall@5 < 0.50` (deterministic, no LLM needed)
+- `avg_citation_validity_ratio < 0.65` (the workflow overrides the CLI default of `0.90`)
+- `avg_composite_score < 0.80`
 
-To add fixture PDFs for CI:
-```
-evals/fixtures/sample_doc.pdf   # small representative PDF (< 5MB)
-```
+Recall@5 is reported by the benchmark step but does not block (see above).
+
+Fixture PDFs are not committed: `scripts/download_fixtures.py` fetches the
+open-access arXiv papers the golden dataset references into `evals/fixtures/`.
+To evaluate different documents, add them to that registry.
 
 Set `GOOGLE_API_KEY` in your GitHub repository secrets.
 
@@ -306,4 +302,4 @@ Set `GOOGLE_API_KEY` in your GitHub repository secrets.
 
 ## 📜 License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [license.txt](license.txt) for the full text.
