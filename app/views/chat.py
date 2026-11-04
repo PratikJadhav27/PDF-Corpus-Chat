@@ -59,8 +59,10 @@ def _create_collection_callback(name_key: str) -> None:
 # Citation processing (Perplexity-style)
 # ---------------------------------------------------------------------------
 
-# Pattern: [any text | page N] or [filename | page N]
-_CITE_RE = re.compile(r'\[([^\]]+\s*\|\s*page\s*[\d]+)\]', re.IGNORECASE)
+# Pattern: [any text | page N], plus the page lists the model occasionally
+# emits instead ("page 2, 3", "pages 2-3", "page 2 & 3") — ISSUE-017.
+_PAGE_SPEC = r'page[s]?\s*[\d]+(?:\s*(?:,|&|and|-|–|—|to)\s*[\d]+)*'
+_CITE_RE = re.compile(r'\[([^\]]+\s*\|\s*' + _PAGE_SPEC + r')\]', re.IGNORECASE)
 
 
 def _process_citations(answer: str, docs: list) -> tuple:
@@ -81,7 +83,9 @@ def _process_citations(answer: str, docs: list) -> tuple:
         # here: names are kept raw and escaped once at each HTML sink below.
         fname_raw = html.unescape(parts[0] if parts else raw)
         page_raw  = html.unescape(parts[1]) if len(parts) > 1 else ""
-        page_num  = re.sub(r"[^0-9]", "", page_raw)
+        # A citation may name several pages; the excerpt comes from whichever
+        # retrieved chunk covers one of them.
+        page_nums = re.findall(r"[0-9]+", page_raw)
 
         if raw not in citation_map:
             idx = len(citation_map) + 1
@@ -97,7 +101,7 @@ def _process_citations(answer: str, docs: list) -> tuple:
                     fname_raw.lower() in src.lower() or
                     src.lower().replace("_", " ") in fname_raw.lower()
                 )
-                page_match = (not page_num) or (pg == page_num)
+                page_match = (not page_nums) or (pg in page_nums)
                 if fname_match and page_match:
                     excerpt = doc.page_content[:120].replace("\n", " ").strip()
                     break

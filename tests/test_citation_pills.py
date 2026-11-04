@@ -93,3 +93,49 @@ def test_answer_without_citations_is_still_paragraph_wrapped():
     assert citations == []
     assert html_out.startswith("<p ")
     assert html_out.endswith("</p>")
+
+
+# ---------------------------------------------------------------------------
+# Multi-page citations (ISSUE-017)
+# ---------------------------------------------------------------------------
+
+def test_page_range_renders_as_a_pill():
+    docs = [
+        _doc(page=2, text="Alpha is 0.5 m."),
+        _doc(page=3, text="Bravo is 120 m."),
+    ]
+
+    html_out, citations = _process_citations(
+        "The tolerance is 0.5 metres [aurora.pdf | page 2, 3].",
+        docs,
+    )
+
+    assert len(citations) == 1
+    assert citations[0][2] == "page 2, 3"
+    assert "[aurora.pdf" not in html_out
+    assert html_out.count('class="dm-cite-pill"') == 1
+
+
+def test_page_range_takes_its_excerpt_from_a_cited_page():
+    docs = [
+        _doc(page=1, text="Page one text."),
+        _doc(page=3, text="Bravo is 120 m."),
+    ]
+
+    _, citations = _process_citations("Fact [aurora.pdf | pages 2-3].", docs)
+
+    assert len(citations) == 1
+    assert citations[0][3] == "Bravo is 120 m."
+
+
+def test_every_range_separator_is_accepted():
+    docs = [_doc(page=3, text="Bravo is 120 m.")]
+
+    for spec in ("page 2-3", "pages 2–3", "page 2 & 3", "page 2 and 3", "pages 2 to 3"):
+        html_out, citations = _process_citations(
+            f"Fact [aurora.pdf | {spec}].", docs
+        )
+
+        assert len(citations) == 1, spec
+        assert "[aurora.pdf" not in html_out, spec
+        assert citations[0][2] == spec, spec
