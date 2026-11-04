@@ -202,3 +202,48 @@ class TestGuardAnswer:
         result = guard_answer_with_citation_check(answer, docs, min_validity_ratio=0.0)
         # citation_count=1, valid=0, ratio=0.0 >= 0.0 → should pass
         assert result == answer
+
+
+# ---------------------------------------------------------------------------
+# Multi-page citations (ISSUE-017)
+# ---------------------------------------------------------------------------
+
+class TestMultiPageCitations:
+    """The model cites a page range even though the prompt asks for one page.
+
+    Before the fix the pattern required ``]`` straight after the digits, so a
+    range matched nothing: the answer's only citation was invisible to the
+    guard, ``citation_count`` was 0, and the user got the "I don't know"
+    fallback instead of the grounded answer.
+    """
+
+    def test_comma_separated_pages_are_parsed(self):
+        assert parse_citations("[report.pdf | page 2, 3]") == [("report.pdf", "2, 3")]
+
+    def test_range_is_normalised_to_its_pages(self):
+        for spec in ("pages 2-3", "pages 2–3", "page 2 & 3", "page 2 and 3", "pages 2 to 3"):
+            assert parse_citations(f"[report.pdf | {spec}]") == [("report.pdf", "2, 3")], spec
+
+    def test_range_counts_as_one_citation(self):
+        docs = [_doc("report.pdf", 2), _doc("report.pdf", 3)]
+        assert citation_validity("[report.pdf | page 2, 3]", docs)["citation_count"] == 1
+
+    def test_every_cited_page_must_have_been_retrieved(self):
+        both = [_doc("report.pdf", 2), _doc("report.pdf", 3)]
+        assert citation_validity("[report.pdf | page 2, 3]", both)["validity_ratio"] == 1.0
+
+        only_page_two = [_doc("report.pdf", 2)]
+        stats = citation_validity("[report.pdf | page 2, 3]", only_page_two)
+        assert stats["citation_count"] == 1
+        assert stats["valid_citation_count"] == 0
+
+    def test_range_with_a_foreign_source_is_invalid(self):
+        docs = [_doc("report.pdf", 2), _doc("report.pdf", 3)]
+        stats = citation_validity("[other.pdf | page 2, 3]", docs)
+        assert stats["valid_citation_count"] == 0
+
+    def test_guard_keeps_a_range_only_answer(self):
+        docs = [_doc("report.pdf", 2), _doc("report.pdf", 3)]
+        answer = "The value is 0.5 metres. [report.pdf | page 2, 3]"
+
+        assert guard_answer_with_citation_check(answer, docs) == answer
