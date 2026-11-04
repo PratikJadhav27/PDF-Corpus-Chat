@@ -63,7 +63,7 @@ The `eval-gate.yml` workflow:
 1. Downloads fixture PDFs via `scripts/download_fixtures.py`
 2. Ingests them into a temporary Qdrant collection
 3. Runs `scripts/run_eval.py` against `evals/golden_dataset.jsonl`
-4. Fails the PR if `avg_faithfulness < 0.85` or `avg_citation_validity_ratio < 0.80`
+4. Fails the PR if `avg_faithfulness < 0.85`, `avg_citation_validity_ratio < 0.65` (the workflow overrides the CLI default of `0.90`), or `avg_composite_score < 0.80`
 
 ---
 

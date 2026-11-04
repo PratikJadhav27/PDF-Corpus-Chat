@@ -11,7 +11,7 @@ Design decisions:
   typical chunk sizes.
 - Graceful degradation: if sentence-transformers is not installed (e.g. in a
   minimal test environment), the module falls back to the original lexical
-  overlap scorer and logs a warning. This keeps the existing 75 tests passing
+  overlap scorer and logs a warning. This keeps the test suite passing
   without needing the model file.
 - The module exports a single public function: rerank_candidates()
   Its call signature is IDENTICAL to the old implementation, so retriever.py

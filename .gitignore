@@ -14,6 +14,9 @@ vector_stores/
 *.faiss
 *.pkl
 
+# Eval fixtures are fetched by scripts/download_fixtures.py, not committed
+evals/fixtures/*.pdf
+
 # Streamlit cache
 .streamlit/
 
